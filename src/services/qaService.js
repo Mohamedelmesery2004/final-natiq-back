@@ -1,9 +1,9 @@
-import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../repositories/index.js';
 import axios from 'axios';
 import config from '../config/index.js';
 import ApiError from '../utils/apiError.js';
-import { ChatSession, QAAnalysis } from '../models/index.js';
+import { ChatSession, QAAnalysis, Ticket } from '../models/index.js';
 import ticketService from './ticketService.js';
+import { analyzeWithNatiqSafe, analyzeWithNatiqByTicketId } from './qa/natiqAnalysisService.js';
 
 const SYSTEM_PROMPT = `You are a strict, senior Customer Support QA and Conversation Intelligence analyst.
 
@@ -179,7 +179,7 @@ const callGroqQA = async (ticketPayload) => {
       model: config.groq.model,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user',   content: userMessage   },
+        { role: 'user', content: userMessage },
       ],
       temperature: 0.1,
       max_tokens: 4096,
@@ -211,8 +211,8 @@ const callGroqQA = async (ticketPayload) => {
   }
 
   return {
-    analysis:   parsed,
-    model:      config.groq.model,
+    analysis: parsed,
+    model: config.groq.model,
     tokensUsed: response.data.usage?.total_tokens ?? null,
     analyzedAt: new Date().toISOString(),
   };
@@ -222,21 +222,31 @@ class QAService {
 
   async analyzeRaw(ticketData) {
     this._validateHasConversationContent(ticketData);
-    return callGroqQA(ticketData);
+    const oldResult = await callGroqQA(ticketData);
+    const natiqResult = await analyzeWithNatiqSafe(ticketData);
+
+    return {
+      ...oldResult,
+      oldAnalysis: oldResult.analysis,
+      natiqAnalysis: natiqResult?.analysis ?? null,
+      natiqMetadata: natiqResult
+        ? { analyzedAt: natiqResult.analyzedAt, provider: 'natiq' }
+        : null,
+    };
   }
 
   async analyzeById(companyId, ticketId) {
     const ticket = await ticketService.getTicketById(companyId, ticketId);
 
     let sessionMessages = [];
-    
+
     // 1. Check for conversation snapshot from resolution time (most reliable)
     if (ticket.context?.conversationSnapshot?.length > 0) {
       sessionMessages = ticket.context.conversationSnapshot;
-    } 
+    }
     // 2. Fall back to active ChatSession if snapshot is missing
     else if (ticket.context?.sessionId) {
-      const session = await chatSessionRepo.findOne({
+      const session = await ChatSession.findOne({
         companyId,
         sessionId: ticket.context.sessionId,
       }).select('messages');
@@ -246,17 +256,23 @@ class QAService {
     const payload = this._buildTicketPayload(ticket, sessionMessages);
     this._validateHasConversationContent(payload);
 
-    const result = await callGroqQA(payload);
+    const oldResult = await callGroqQA(payload);
+    const natiqResult = await analyzeWithNatiqSafe(payload);
 
     return {
-      ...result,
+      ...oldResult,
+      oldAnalysis: oldResult.analysis,
+      natiqAnalysis: natiqResult?.analysis ?? null,
+      natiqMetadata: natiqResult
+        ? { analyzedAt: natiqResult.analyzedAt, provider: 'natiq' }
+        : null,
       ticket: {
-        _id:          ticket._id,
+        _id: ticket._id,
         ticketNumber: ticket.ticketNumber,
-        status:       ticket.status,
-        channel:      ticket.channel,
-        category:     ticket.category,
-        priority:     ticket.priority,
+        status: ticket.status,
+        channel: ticket.channel,
+        category: ticket.category,
+        priority: ticket.priority,
       },
     };
   }
@@ -264,7 +280,7 @@ class QAService {
   async analyzeAndSaveByTicketId(companyId, ticketId) {
     try {
       const result = await this.analyzeById(companyId, ticketId);
-      const { analysis, metadata, ticket } = result;
+      const { analysis, natiqAnalysis, ticket } = result;
 
       // Extract high-level metrics safely
       const professionalismScore = analysis.agent_analysis?.agent_professionalism_score || 0;
@@ -276,7 +292,7 @@ class QAService {
       // Pull ticket to get agent/customer IDs if not in result
       const fullTicket = await ticketService.getTicketById(companyId, ticketId);
 
-      const savedAnalysis = await qaAnalysisRepo.model.findOneAndUpdate(
+      const savedAnalysis = await QAAnalysis.findOneAndUpdate(
         { ticketId },
         {
           companyId,
@@ -294,10 +310,12 @@ class QAService {
             quality: qualityScore,
           },
           fullAnalysis: analysis,
+          natiqAnalysis: natiqAnalysis ?? null,
           metadata: {
             model: result.model,
             tokensUsed: result.tokensUsed,
             analyzedAt: new Date(result.analyzedAt),
+            natiq: result.natiqMetadata ?? null,
           },
         },
         { new: true, upsert: true }
@@ -309,21 +327,40 @@ class QAService {
           { _id: ticketId, companyId },
           { $set: { 'context.analysisStatus': 'completed' } }
         );
-      } catch (err) {}
+      } catch (err) { }
 
       console.log(`[QA Automation] Successfully saved analysis for ticket ${fullTicket.ticketNumber}`);
       return savedAnalysis;
     } catch (error) {
       console.error(`[QA Automation] Detailed Error for ticket ${ticketId}:`, error);
-      
+
       // Mark as failed
       try {
         await Ticket.updateOne(
           { _id: ticketId, companyId },
           { $set: { 'context.analysisStatus': 'failed' } }
         );
-      } catch (err) {}
-      
+      } catch (err) { }
+
+      throw error;
+    }
+  }
+
+  async analyzeNatiqByTicketId(companyId, ticketId) {
+    try {
+      const result = await analyzeWithNatiqByTicketId(companyId, ticketId);
+      return {
+        ...result,
+        ticketId,
+        provider: 'natiq',
+      };
+    } catch (error) {
+      console.error('[QA Natiq] analyze by ticket failed', {
+        ticketId,
+        message: error?.message,
+        code: error?.code,
+        status: error?.response?.status,
+      });
       throw error;
     }
   }
@@ -381,24 +418,24 @@ class QAService {
       .filter((m) => typeof m.content === 'string' && m.content.trim())
       .slice(-60)
       .map((m) => ({
-        role:      m.role,
-        content:   m.content.trim(),
+        role: m.role,
+        content: m.content.trim(),
         timestamp: m.timestamp,
-        isSystem:  m.meta?.type === 'system_escalation' || m.role === 'assistant',
+        isSystem: m.meta?.type === 'system_escalation' || m.role === 'assistant',
       }));
 
     return {
-      ticketNumber:    ticket.ticketNumber,
-      channel:         ticket.channel,
-      category:        ticket.category,
-      priority:        ticket.priority,
-      status:          ticket.status,
-      createdAt:       ticket.createdAt,
-      resolvedAt:      ticket.resolvedAt      ?? null,
+      ticketNumber: ticket.ticketNumber,
+      channel: ticket.channel,
+      category: ticket.category,
+      priority: ticket.priority,
+      status: ticket.status,
+      createdAt: ticket.createdAt,
+      resolvedAt: ticket.resolvedAt ?? null,
       firstResponseAt: ticket.firstResponseAt ?? null,
 
       customer: {
-        name:  ticket.userId?.name  ?? 'Unknown',
+        name: ticket.userId?.name ?? 'Unknown',
         email: ticket.userId?.email ?? null,
       },
 
@@ -410,14 +447,14 @@ class QAService {
 
       agentNotes: (ticket.agentNotes ?? []).map((n) => ({
         agentName: n.agentId?.name ?? 'Agent',
-        content:   n.content,
+        content: n.content,
         createdAt: n.createdAt,
       })),
       conversation,
       conversationStats: {
-        total:  conversation.length,
-        user:   conversation.filter((m) => m.role === 'user').length,
-        agent:  conversation.filter((m) => m.role === 'agent').length,
+        total: conversation.length,
+        user: conversation.filter((m) => m.role === 'user').length,
+        agent: conversation.filter((m) => m.role === 'agent').length,
         system: conversation.filter((m) => m.isSystem).length,
       },
     };

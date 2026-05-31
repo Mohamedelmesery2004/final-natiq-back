@@ -49,6 +49,10 @@ const qaAnalysisSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       required: true,
     },
+    natiqAnalysis: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
 
     metadata: {
       model: String,

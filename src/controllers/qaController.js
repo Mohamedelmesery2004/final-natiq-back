@@ -1,4 +1,3 @@
-import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../repositories/index.js';
 import qaService from '../services/qaService.js';
 import BaseController from './baseController.js';
 
@@ -12,9 +11,15 @@ class QAController extends BaseController {
   analyzeById = this.catchAsync(async (req, res) => {
     const { ticketId } = req.params;
 
-    const saved = await qaService.analyzeAndSaveByTicketId(req.companyId, ticketId);
+    const result = await qaService.analyzeNatiqByTicketId(req.companyId, ticketId);
 
-    this.sendSuccess(res, saved, 'QA analysis completed successfully');
+    this.sendSuccess(res, result, 'QA analysis completed successfully');
+  });
+
+  analyzeNatiqById = this.catchAsync(async (req, res) => {
+    const { ticketId } = req.params;
+    const result = await qaService.analyzeNatiqByTicketId(req.companyId, ticketId);
+    this.sendSuccess(res, result, 'Natiq analysis completed successfully');
   });
 
   getAutomatedResults = this.catchAsync(async (req, res) => {

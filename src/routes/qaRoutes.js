@@ -24,6 +24,13 @@ router.post(
 );
 
 router.post(
+  '/analyze/:ticketId',
+  qaAccess,
+  validate(qaValidator.analyzeNatiqById),
+  qaController.analyzeNatiqById
+);
+
+router.post(
   '/tickets/:ticketId/analyze',
   qaAccess,
   validate(qaValidator.analyzeById),
