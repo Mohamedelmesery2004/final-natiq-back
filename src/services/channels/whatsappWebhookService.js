@@ -1,3 +1,4 @@
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../../repositories/index.js';
 import { Company, User, ChatSession } from '../../models/index.js';
 import chatSessionManager from '../chat/chatSessionManager.js';
 import messageProcessor from '../chat/messageProcessor.js';
@@ -9,7 +10,7 @@ class WhatsappWebhookService {
   async processWebhook(body) {
     const { companySlug, entry } = body;
 
-    const company = await Company.findOne({ slug: companySlug, isActive: true });
+    const company = await companyRepo.findOne({ slug: companySlug, isActive: true });
     if (!company) {
       return { success: false, message: 'Company not found', data: null };
     }
@@ -29,9 +30,9 @@ class WhatsappWebhookService {
           const contactName =
             contacts.find((c) => c.wa_id === phone)?.profile?.name || `WhatsApp ${phone}`;
 
-          let user = await User.findOne({ companyId: company._id, phone });
+          let user = await userRepo.findOne({ companyId: company._id, phone });
           if (!user) {
-            user = await User.create({
+            user = await userRepo.create({
               companyId: company._id,
               name: contactName,
               email: `wa_${phone}@whatsapp.placeholder`,
@@ -41,7 +42,7 @@ class WhatsappWebhookService {
             });
           }
 
-          let session = await ChatSession.findOne({
+          let session = await chatSessionRepo.findOne({
             companyId: company._id,
             userId: user._id,
             channel: CHANNELS.WHATSAPP_MOCK,
@@ -90,7 +91,7 @@ class WhatsappWebhookService {
 
             if (session.summary?.linkedTicketId) {
               const { Ticket } = await import('../../models/index.js');
-              const ticket = await Ticket.findById(session.summary.linkedTicketId);
+              const ticket = await ticketRepo.model.findById(session.summary.linkedTicketId);
               if (ticket && ticket.status !== 'resolved') {
                 ticket.status = 'resolved';
                 ticket.resolvedAt = new Date();

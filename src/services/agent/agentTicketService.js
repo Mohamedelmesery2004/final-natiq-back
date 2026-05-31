@@ -1,3 +1,4 @@
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../../repositories/index.js';
 import { Ticket, User, ChatSession, Company } from '../../models/index.js';
 import { getIO } from '../../sockets/index.js';
 import { logEvent } from '../eventLogService.js';
@@ -14,12 +15,12 @@ class AgentTicketService {
         _id: ticketId,
         companyId,
         assignedTo: null,
-        status: TICKET_STATUS.OPEN,
+        status: TICKET_STATUS.PENDING,
       },
       {
         $set: {
           assignedTo: agentId,
-          status: TICKET_STATUS.IN_PROGRESS,
+          status: TICKET_STATUS.OPENED,
         },
       },
       { new: true }
@@ -28,18 +29,18 @@ class AgentTicketService {
       .populate('assignedTo', 'name email');
 
     if (!ticket) {
-      const existing = await Ticket.findOne({ _id: ticketId, companyId });
+      const existing = await ticketRepo.findOne({ _id: ticketId, companyId });
       if (!existing) throw ApiError.notFound('Ticket not found');
       if (existing.assignedTo) throw ApiError.conflict('Ticket is already assigned to another agent');
-      if (existing.status !== TICKET_STATUS.OPEN) throw ApiError.conflict(`Ticket status is '${existing.status}', cannot claim`);
+      if (existing.status !== TICKET_STATUS.PENDING) throw ApiError.conflict(`Ticket status is '${existing.status}', cannot claim`);
       throw ApiError.conflict('Ticket cannot be claimed');
     }
 
     if (ticket.channel === CHANNELS.TELEGRAM && ticket.userId) {
       try {
-        const company = await Company.findById(companyId);
+        const company = await companyRepo.model.findById(companyId);
         const botToken = company.channelsConfig?.telegram?.botToken;
-        const user = await User.findById(ticket.userId._id);
+        const user = await userRepo.model.findById(ticket.userId._id);
 
                 if (user && user.telegramChatId && botToken) {
           await telegramService.sendMessage(
@@ -61,11 +62,45 @@ class AgentTicketService {
       metadata: { agentId, ticketNumber: ticket.ticketNumber },
     });
 
+    if (ticket.context?.sessionId) {
+      const claimMsgContent = `تم استلام استفسارك. الموظف (${ticket.assignedTo.name}) دخل المحادثة الآن لمساعدتك.`;
+      const claimMsg = {
+        role: 'system',
+        content: claimMsgContent,
+        timestamp: new Date()
+      };
+
+      await ChatSession.findOneAndUpdate(
+        { companyId, sessionId: ticket.context.sessionId },
+        {
+          $set: {
+            isAgentHandling: true,
+            assignedAgent: agentId,
+          },
+          $push: {
+            messages: claimMsg
+          },
+          $inc: { messageCount: 1 }
+        }
+      );
+
+      if (ticket.channel === CHANNELS.WEB) {
+        try {
+          getIO().of('/webchat').to(`session:${ticket.context.sessionId}`).emit('chat:message', {
+            sessionId: ticket.context.sessionId,
+            message: claimMsg,
+          });
+        } catch (err) {
+          console.error('Failed to emit Web Chat claim notification:', err.message);
+        }
+      }
+    }
+
     return ticket;
   }
 
   async agentReplyToTicket(companyId, ticketId, agentId, content, media = null) {
-    const ticket = await Ticket.findOne({ _id: ticketId, companyId, assignedTo: agentId });
+    const ticket = await ticketRepo.findOne({ _id: ticketId, companyId, assignedTo: agentId });
     if (!ticket) throw ApiError.forbidden('You can only reply to tickets assigned to you');
 
     ticket.agentNotes.push({
@@ -78,15 +113,15 @@ class AgentTicketService {
       ticket.firstResponseAt = new Date();
     }
 
-    if (ticket.status === TICKET_STATUS.OPEN) {
-      ticket.status = TICKET_STATUS.IN_PROGRESS;
+    if (ticket.status === TICKET_STATUS.PENDING) {
+      ticket.status = TICKET_STATUS.OPENED;
     }
 
     await ticket.save();
 
     let session = null;
     if (ticket.context?.sessionId) {
-      session = await ChatSession.findOne({ companyId, sessionId: ticket.context.sessionId });
+      session = await chatSessionRepo.findOne({ companyId, sessionId: ticket.context.sessionId });
       if (session) {
         if (!session.isAgentHandling) {
           session.isAgentHandling = true;
@@ -117,9 +152,9 @@ class AgentTicketService {
         await session.save();
 
         if (session.channel === CHANNELS.TELEGRAM) {
-          const company = await Company.findById(companyId);
+          const company = await companyRepo.model.findById(companyId);
           const botToken = company.channelsConfig?.telegram?.botToken;
-          const user = await User.findById(session.userId);
+          const user = await userRepo.model.findById(session.userId);
 
           if (user?.telegramChatId && botToken) {
             if (media) {
@@ -144,14 +179,21 @@ class AgentTicketService {
   }
 
   async getTicketMessages(companyId, ticketId, agentId) {
-    const ticket = await Ticket.findOne({ _id: ticketId, companyId, assignedTo: agentId });
-    if (!ticket) throw ApiError.notFound('Ticket not found or not assigned to you');
+    const ticket = await ticketRepo.findOne({
+      _id: ticketId,
+      companyId,
+      $or: [
+        { assignedTo: agentId },
+        { assignedTo: null }
+      ]
+    });
+    if (!ticket) throw ApiError.notFound('Ticket not found or not accessible');
 
     if (!ticket.context?.sessionId) {
       return { messages: [], sessionId: null };
     }
 
-    const session = await ChatSession.findOne({
+    const session = await chatSessionRepo.model.findOne({
       companyId,
       sessionId: ticket.context.sessionId,
     }).populate('userId', 'name email');
@@ -173,7 +215,7 @@ class AgentTicketService {
   async getChatHistory(companyId, sessionId, agentId, options = {}) {
     const { page = 1, limit = 50, before, after, messageType } = options;
 
-    const session = await ChatSession.findOne({
+    const session = await chatSessionRepo.findOne({
       companyId,
       sessionId,
     }).populate('userId', 'name email');
@@ -182,7 +224,7 @@ class AgentTicketService {
       throw ApiError.notFound('Chat session not found');
     }
 
-    const linkedTicket = await Ticket.findOne({
+    const linkedTicket = await ticketRepo.findOne({
       companyId,
       'context.sessionId': sessionId,
       assignedTo: agentId,
@@ -255,14 +297,14 @@ class AgentTicketService {
   }
 
   async resolveTicket(companyId, ticketId, agentId) {
-    const ticket = await Ticket.findOne({ _id: ticketId, companyId, assignedTo: agentId });
+    const ticket = await ticketRepo.findOne({ _id: ticketId, companyId, assignedTo: agentId });
     if (!ticket) throw ApiError.forbidden('You can only resolve tickets assigned to you');
 
-    if (ticket.status === TICKET_STATUS.RESOLVED || ticket.status === TICKET_STATUS.CLOSED) {
+    if (ticket.status === TICKET_STATUS.CLOSED || ticket.status === TICKET_STATUS.CLOSED) {
       throw ApiError.badRequest(`Ticket is already ${ticket.status}`);
     }
 
-    ticket.status = TICKET_STATUS.RESOLVED;
+    ticket.status = TICKET_STATUS.CLOSED;
     if (!ticket.resolvedAt) ticket.resolvedAt = new Date();
     if (!ticket.context) ticket.context = {};
     ticket.context.analysisStatus = 'pending';
@@ -286,7 +328,7 @@ class AgentTicketService {
   }
 
   async closeTicket(companyId, ticketId, agentId) {
-    const ticket = await Ticket.findOne({ _id: ticketId, companyId, assignedTo: agentId });
+    const ticket = await ticketRepo.findOne({ _id: ticketId, companyId, assignedTo: agentId });
     if (!ticket) throw ApiError.forbidden('You can only close tickets assigned to you');
 
     if (ticket.status === TICKET_STATUS.CLOSED) {
@@ -330,15 +372,15 @@ class AgentTicketService {
 
   async sendFeedbackPromptToCustomer(ticket, companyId) {
     if (!ticket.context?.sessionId) return;
-    const session = await ChatSession.findOne({ sessionId: ticket.context.sessionId });
+    const session = await chatSessionRepo.findOne({ sessionId: ticket.context.sessionId });
     if (!session) return;
-    const company = await Company.findById(companyId);
+    const company = await companyRepo.model.findById(companyId);
     if (!company) return;
 
     const promptText = `Your ticket #${ticket.ticketNumber} has been resolved.\nPlease rate your support experience from 1 to 5.`;
 
     if (session.channel === CHANNELS.TELEGRAM) {
-      const customer = await User.findById(session.userId);
+      const customer = await userRepo.model.findById(session.userId);
       if (!customer?.telegramChatId) return;
 
       const botToken = company.channelsConfig?.telegram?.botToken;
@@ -387,24 +429,33 @@ class AgentTicketService {
   }
 
   async getAgentTickets(companyId, agentId, filters = {}) {
-    const { page = 1, limit = 20, status, priority, category, queue, channel } = filters;
+    const { page = 1, limit = 20, status, priority, category, queue, channel, exclude_channel } = filters;
 
     const query = { companyId };
 
     if (queue === 'unassigned') {
       query.assignedTo = null;
-      query.status = TICKET_STATUS.OPEN;
+      query.status = TICKET_STATUS.PENDING;
     } else {
       query.assignedTo = agentId;
     }
 
     if (status && queue !== 'unassigned') query.status = status;
-    if (priority) query.priority = priority;
+    if (priority) {
+      const priorities = priority.split(',');
+      if (priorities.length > 1) query.priority = { $in: priorities };
+      else query.priority = priority;
+    }
     if (category) query.category = category;
-    if (channel && channel !== 'all') query.channel = channel;
+    
+    if (channel && channel !== 'all') {
+      query.channel = channel;
+    } else if (exclude_channel) {
+      query.channel = { $ne: exclude_channel };
+    }
 
-    const total = await Ticket.countDocuments(query);
-    const tickets = await Ticket.find(query)
+    const total = await ticketRepo.count(query);
+    const tickets = await ticketRepo.model.find(query)
       .select('-agentNotes')
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
@@ -419,7 +470,7 @@ class AgentTicketService {
   }
 
   async getAgentTicketById(companyId, ticketId, agentId) {
-    const ticket = await Ticket.findOne({ _id: ticketId, companyId, assignedTo: agentId })
+    const ticket = await ticketRepo.model.findOne({ _id: ticketId, companyId, assignedTo: agentId })
       .populate('userId', 'name email phone')
       .populate('assignedTo', 'name email')
       .populate('agentNotes.agentId', 'name email');

@@ -26,6 +26,14 @@ const config = {
     baseUrl: process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1',
   },
 
+  gemini: {
+    apiKey: process.env.GEMINI_API_KEY,
+  },
+
+  elevenlabs: {
+    apiKey: process.env.ELEVENLABS_API_KEY,
+  },
+
   huggingface: {
     apiToken: process.env.HF_API_TOKEN,
   },

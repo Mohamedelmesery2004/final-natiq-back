@@ -44,4 +44,17 @@ router.post(
   chatController.closeSession
 );
 
+router.post(
+  '/sessions/:sessionId/upload-recording',
+  requirePermission(RESOURCES.CHAT, ACTIONS.CREATE),
+  chatUpload.single('audio'),
+  chatController.uploadSessionRecording
+);
+
+router.post(
+  '/tts',
+  requirePermission(RESOURCES.CHAT, ACTIONS.CREATE),
+  chatController.generateTTS
+);
+
 export default router;

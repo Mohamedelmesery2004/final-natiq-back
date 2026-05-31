@@ -1,3 +1,4 @@
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../repositories/index.js';
 import axios from 'axios';
 import path from 'path';
 import agentDashboardService from '../services/agent/agentDashboardService.js';
@@ -16,10 +17,10 @@ class AgentController extends BaseController {
   login = this.catchAsync(async (req, res) => {
     const { email, password, companySlug } = req.body;
 
-    const company = await Company.findOne({ slug: companySlug, isActive: true });
+    const company = await companyRepo.findOne({ slug: companySlug, isActive: true });
     if (!company) throw ApiError.unauthorized('Invalid company or credentials');
 
-    const user = await User.findOne({ companyId: company._id, email });
+    const user = await userRepo.findOne({ companyId: company._id, email });
     if (!user) throw ApiError.unauthorized('Invalid email or password');
     if (!user.isActive) throw ApiError.unauthorized('Account is deactivated');
     if (
@@ -42,7 +43,7 @@ class AgentController extends BaseController {
   });
 
   getProfile = this.catchAsync(async (req, res) => {
-    const user = await User.findById(req.userId)
+    const user = await userRepo.model.findById(req.userId)
       .select('-passwordHash')
       .populate('companyId', 'name slug');
     if (!user) throw ApiError.notFound('User not found');
@@ -64,7 +65,7 @@ class AgentController extends BaseController {
       if (!updateData.currentPassword) {
         throw ApiError.badRequest('Current password is required to set a new password');
       }
-      const userWithPassword = await User.findById(req.userId);
+      const userWithPassword = await userRepo.model.findById(req.userId);
       const isMatch = await userWithPassword.comparePassword(updateData.currentPassword);
       if (!isMatch) throw ApiError.badRequest('Current password is incorrect');
     }
@@ -77,14 +78,14 @@ class AgentController extends BaseController {
     const ticket = await agentTicketService.claimTicket(req.companyId, req.params.ticketId, req.userId);
 
     if (ticket.context?.sessionId) {
-      const session = await ChatSession.findOne({
+      const session = await chatSessionRepo.findOne({
         companyId: req.companyId,
         sessionId: ticket.context.sessionId,
       });
 
       if (session) {
-        const customer = await User.findById(session.userId);
-        const company = await Company.findById(req.companyId);
+        const customer = await userRepo.model.findById(session.userId);
+        const company = await companyRepo.model.findById(req.companyId);
 
         if (session.channel === CHANNELS.TELEGRAM && customer?.telegramChatId) {
           const botToken = company?.channelsConfig?.telegram?.botToken;

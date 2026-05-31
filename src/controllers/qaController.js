@@ -1,3 +1,4 @@
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../repositories/index.js';
 import qaService from '../services/qaService.js';
 import BaseController from './baseController.js';
 

@@ -1,21 +1,21 @@
-import { User, Company } from '../models/index.js';
+import { userRepo, companyRepo } from '../repositories/index.js';
 import { generateToken } from '../middlewares/authMiddleware.js';
 import { ROLES } from '../constants/index.js';
 import ApiError from '../utils/apiError.js';
 
 class AuthService {
   async register({ companySlug, name, email, password, phone }) {
-    const company = await Company.findOne({ slug: companySlug, isActive: true });
+    const company = await companyRepo.findOne({ slug: companySlug, isActive: true });
     if (!company) {
       throw ApiError.notFound('Company not found or inactive');
     }
 
-    const existingUser = await User.findOne({ companyId: company._id, email });
+    const existingUser = await userRepo.findOne({ companyId: company._id, email });
     if (existingUser) {
       throw ApiError.conflict('User with this email already exists in this company');
     }
 
-    const user = await User.create({
+    const user = await userRepo.create({
       companyId: company._id,
       name,
       email,
@@ -29,12 +29,12 @@ class AuthService {
   }
 
   async login({ email, password, companySlug }) {
-    const company = await Company.findOne({ slug: companySlug });
+    const company = await companyRepo.findOne({ slug: companySlug });
     if (!company) {
       throw ApiError.notFound('Company not found');
     }
 
-    const user = await User.findOne({ companyId: company._id, email });
+    const user = await userRepo.findOne({ companyId: company._id, email });
     if (!user) {
       throw ApiError.unauthorized('Invalid email or password');
     }
@@ -56,11 +56,11 @@ class AuthService {
   }
 
   async getMe(userId) {
-    return await User.findById(userId).populate('companyId', 'name slug');
+    return await userRepo.model.findById(userId).populate('companyId', 'name slug');
   }
 
   async getPublicCompanies() {
-    return await Company.find({ isActive: true }).select('name slug _id');
+    return await companyRepo.find({ isActive: true }, { select: 'name slug _id' });
   }
 }
 

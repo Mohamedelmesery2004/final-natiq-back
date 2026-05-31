@@ -10,7 +10,7 @@ const updateCompanySettings = {
         webhookUrl: Joi.string().allow('', null),
         webhookSecret: Joi.string().allow('', null),
         isActive: Joi.boolean(),
-      }),
+      }).options({ stripUnknown: true, abortEarly: false }),
       whatsapp: Joi.object({
         isActive: Joi.boolean(),
         phoneNumberId: Joi.string().allow('', null),

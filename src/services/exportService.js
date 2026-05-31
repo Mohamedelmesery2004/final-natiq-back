@@ -1,3 +1,4 @@
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../repositories/index.js';
 import { Call, Ticket } from '../models/index.js';
 import analyticsService from './analyticsService.js';
 
@@ -32,7 +33,7 @@ export async function exportCallsCsv(companyId, { from, to } = {}) {
     if (dr.to) filter.createdAt.$lte = new Date(dr.to);
   }
 
-  const calls = await Call.find(filter)
+  const calls = await callRepo.model.find(filter)
     .sort({ createdAt: -1 })
     .populate('agentId', 'name email')
     .populate('customerId', 'name email')
@@ -76,7 +77,7 @@ export async function exportTicketsCsv(companyId, { from, to } = {}) {
     if (dr.to) filter.createdAt.$lte = new Date(dr.to);
   }
 
-  const tickets = await Ticket.find(filter)
+  const tickets = await ticketRepo.model.find(filter)
     .sort({ createdAt: -1 })
     .populate('assignedTo', 'name email')
     .lean();

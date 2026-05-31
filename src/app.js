@@ -24,6 +24,7 @@ import callRoutes from './routes/callRoutes.js';
 import teamLeaderRoutes from './routes/teamLeaderRoutes.js';
 import managerRoutes from './routes/managerRoutes.js';
 import ownerRoutes from './routes/ownerRoutes.js';
+import internalMessageRoutes from './routes/internalMessageRoutes.js';
 
 import { errorHandler, notFound } from './middlewares/errorMiddleware.js';
 
@@ -79,6 +80,7 @@ app.use('/api/v1/qa', qaRoutes);
 app.use('/api/v1/calls', callRoutes);
 app.use('/api/v1/team-leader', teamLeaderRoutes);
 app.use('/api/v1/owner', ownerRoutes);
+app.use('/api/v1/internal-messages', internalMessageRoutes);
 
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 

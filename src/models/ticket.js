@@ -54,7 +54,7 @@ const ticketSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: Object.values(TICKET_STATUS),
-      default: TICKET_STATUS.OPEN,
+      default: TICKET_STATUS.PENDING,
     },
     assignedTo: {
       type: mongoose.Schema.Types.ObjectId,

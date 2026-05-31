@@ -10,7 +10,7 @@ const telegramWebhook = {
         first_name: Joi.string(),
         last_name: Joi.string(),
         username: Joi.string(),
-      }).required(),
+      }).options({ stripUnknown: true, abortEarly: false }).required(),
       chat: Joi.object({
         id: Joi.number().required(),
         type: Joi.string(),
@@ -36,10 +36,10 @@ const whatsappMockWebhook = {
                     type: Joi.string().default('text'),
                     text: Joi.object({
                       body: Joi.string().required(),
-                    }),
+                    }).options({ stripUnknown: true, abortEarly: false }),
                     timestamp: Joi.string(),
                   })
-                ),
+                ).options({ stripUnknown: true }),
                 contacts: Joi.array().items(
                   Joi.object({
                     profile: Joi.object({

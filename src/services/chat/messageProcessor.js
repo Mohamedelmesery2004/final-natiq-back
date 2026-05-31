@@ -1,3 +1,4 @@
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../../repositories/index.js';
 import { ChatSession, KnowledgeItem, Ticket, Company, User } from '../../models/index.js';
 import { generateEmbedding, cosineSimilarity } from '../../utils/embeddings.js';
 import { getAIResponse } from '../../utils/ai.js';
@@ -10,7 +11,7 @@ class MessageProcessor {
     const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
     const prefix = 'NQ'; 
 
-    const lastTicket = await Ticket.findOne({
+    const lastTicket = await ticketRepo.model.findOne({
       companyId,
       ticketNumber: new RegExp(`^${prefix}-${dateStr}`),
     }).sort({ ticketNumber: -1 });
@@ -50,15 +51,15 @@ class MessageProcessor {
   }
 
   async processMessage(companyId, sessionId, userMessage, channel = 'web', media = null, skipUserMessageSave = false) {
-    const session = await ChatSession.findOne({ companyId, sessionId, status: CHAT_STATUS.ACTIVE });
+    const session = await chatSessionRepo.findOne({ companyId, sessionId, status: CHAT_STATUS.ACTIVE });
     if (!session) {
       throw new Error('Active chat session not found');
     }
 
     const [company, user, userTickets] = await Promise.all([
-      Company.findById(companyId),
-      User.findById(session.userId).select('name email phone role telegramChatId createdAt'),
-      Ticket.find({ companyId, userId: session.userId })
+      companyRepo.model.findById(companyId),
+      userRepo.model.findById(session.userId).select('name email phone role telegramChatId createdAt'),
+      ticketRepo.model.find({ companyId, userId: session.userId })
         .sort({ createdAt: -1 })
         .limit(5)
         .select('ticketNumber category priority status createdAt'),
@@ -146,7 +147,15 @@ Behavior rules:
 - Only set shouldEscalate to true if the customer explicitly says they want a human/agent or want to file a complaint (e.g. "أعمل شكوى", "أكلم حد").
 - Do NOT escalate just because confidence is low — try your best first.
 - NEVER say you created a ticket or give a ticket number. The system will do it.
-- Be concise but thorough.${userProfile}${ticketHistory}`;
+- Be concise but thorough.${
+  channel === 'voice' 
+    ? `\n\n🗣️ VOICE CALL MODE RULES (CRITICAL):
+- You are a professional telephone voice assistant.
+- ALWAYS respond in natural, polite Spoken Arabic (العامية المصرية المهذبة).
+- KEEP IT EXTREMELY SHORT: Provide a direct, 1-sentence answer. No yapping. No lists. No formatting.
+- If you don't immediately know the answer or the user is upset, YOU MUST set shouldEscalate to true and say exactly "ثواني وهحولك لأحد ممثلي خدمة العملاء لمساعدتك."` 
+    : ''
+}${userProfile}${ticketHistory}`;
 
     const previousMessages = session.messages
       .filter((m) => m.role !== 'system')
@@ -198,10 +207,10 @@ Behavior rules:
     const userAsksForTicket = /\b(ticket|complain)\b|شكوى|شكوي|تذكرة|تذكره|اشتكي|أشتكي|بلاغ/i.test(userMessage);
     const needsEscalation = userAsksForAgent || userAsksForTicket || aiResult.shouldEscalate;
 
-    let canCreateTicket = !session.summary.linkedTicketId;
-    if (!canCreateTicket && session.summary.linkedTicketId) {
-      const existingTicket = await Ticket.findById(session.summary.linkedTicketId);
-      if (existingTicket && [TICKET_STATUS.RESOLVED, TICKET_STATUS.CLOSED].includes(existingTicket.status)) {
+    let canCreateTicket = !session.summary.linkedTicketId && channel !== 'voice';
+    if (!canCreateTicket && session.summary.linkedTicketId && channel !== 'voice') {
+      const existingTicket = await ticketRepo.model.findById(session.summary.linkedTicketId);
+      if (existingTicket && [TICKET_STATUS.CLOSED, TICKET_STATUS.CLOSED].includes(existingTicket.status)) {
         canCreateTicket = true;
       }
     }
@@ -209,14 +218,14 @@ Behavior rules:
     if (needsEscalation && canCreateTicket) {
       const ticketNumber = await this.generateTicketNumber(companyId);
 
-      ticket = await Ticket.create({
+      ticket = await ticketRepo.create({
         companyId,
         ticketNumber,
         userId: session.userId,
         channel,
         category: aiResult.category || 'other',
         priority: aiResult.priority || TICKET_PRIORITY.MEDIUM,
-        status: TICKET_STATUS.OPEN,
+        status: TICKET_STATUS.PENDING,
         context: {
           sessionId: session.sessionId,
           lastUserMessage: userMessage,

@@ -1,3 +1,4 @@
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../repositories/index.js';
 import User from '../models/user.js';
 import Company from '../models/company.js';
 import Ticket from '../models/ticket.js';
@@ -41,20 +42,20 @@ const getDashboardSummary = async (req, res, next) => {
       chatsPrevious7Days,
       company
     ] = await Promise.all([
-      User.countDocuments({ companyId, role: ROLES.AGENT }),
-      User.countDocuments({ companyId, role: ROLES.COMPANY_MANAGER }),
-      User.countDocuments({ companyId, role: ROLES.TEAM_LEADER }),
-      User.countDocuments({ companyId, role: ROLES.COMPANY_MANAGER, isActive: true }),
-      Ticket.countDocuments({ companyId }),
-      Ticket.countDocuments({ companyId, status: { $in: [TICKET_STATUS.OPEN, TICKET_STATUS.IN_PROGRESS] } }),
-      Ticket.countDocuments({ companyId, status: { $in: [TICKET_STATUS.RESOLVED, TICKET_STATUS.CLOSED] } }),
+      userRepo.count({ companyId, role: ROLES.AGENT }),
+      userRepo.count({ companyId, role: ROLES.COMPANY_MANAGER }),
+      userRepo.count({ companyId, role: ROLES.TEAM_LEADER }),
+      userRepo.count({ companyId, role: ROLES.COMPANY_MANAGER, isActive: true }),
+      ticketRepo.count({ companyId }),
+      ticketRepo.count({ companyId, status: { $in: [TICKET_STATUS.PENDING, TICKET_STATUS.OPENED] } }),
+      ticketRepo.count({ companyId, status: { $in: [TICKET_STATUS.CLOSED, TICKET_STATUS.CLOSED] } }),
       ChatSession.countDocuments({ companyId }),
       ChatSession.countDocuments({ companyId, status: CHAT_STATUS.ACTIVE }),
-      Ticket.countDocuments({ companyId, createdAt: { $gte: sevenDaysAgo } }),
-      Ticket.countDocuments({ companyId, createdAt: { $gte: fourteenDaysAgo, $lt: sevenDaysAgo } }),
+      ticketRepo.count({ companyId, createdAt: { $gte: sevenDaysAgo } }),
+      ticketRepo.count({ companyId, createdAt: { $gte: fourteenDaysAgo, $lt: sevenDaysAgo } }),
       ChatSession.countDocuments({ companyId, createdAt: { $gte: sevenDaysAgo } }),
       ChatSession.countDocuments({ companyId, createdAt: { $gte: fourteenDaysAgo, $lt: sevenDaysAgo } }),
-      Company.findById(companyId).select('channelsConfig'),
+      companyRepo.model.findById(companyId).select('channelsConfig'),
     ]);
 
     const totalWorkforce = totalAgents + totalManagers + totalTeamLeaders;
@@ -116,7 +117,7 @@ const getDashboardSummary = async (req, res, next) => {
  */
 const getCompanySettings = async (req, res, next) => {
   try {
-    const company = await Company.findById(req.user.companyId);
+    const company = await companyRepo.model.findById(req.user.companyId);
     if (!company) {
       return res.status(404).json({ success: false, message: 'Company not found' });
     }
@@ -137,7 +138,7 @@ const getCompanySettings = async (req, res, next) => {
  */
 const updateCompanySettings = async (req, res, next) => {
   try {
-    const company = await Company.findById(req.user.companyId);
+    const company = await companyRepo.model.findById(req.user.companyId);
     if (!company) {
       return res.status(404).json({ success: false, message: 'Company not found' });
     }
@@ -227,7 +228,7 @@ const updateTelegramWebhook = async (req, res, next) => {
       });
     }
 
-    const company = await Company.findById(req.user.companyId);
+    const company = await companyRepo.model.findById(req.user.companyId);
     if (!company) {
       return res.status(404).json({ success: false, message: 'Company not found' });
     }
@@ -280,7 +281,7 @@ const updateTelegramWebhook = async (req, res, next) => {
  */
 const listManagers = async (req, res, next) => {
   try {
-    const managers = await User.find({
+    const managers = await userRepo.model.find({
       companyId: req.user.companyId,
       role: ROLES.COMPANY_MANAGER,
     }).select('-passwordHash');

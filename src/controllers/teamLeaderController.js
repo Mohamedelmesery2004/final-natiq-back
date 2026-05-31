@@ -1,3 +1,4 @@
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../repositories/index.js';
 import BaseController from './baseController.js';
 import teamLeaderService from '../services/teamLeaderService.js';
 import ApiError from '../utils/apiError.js';

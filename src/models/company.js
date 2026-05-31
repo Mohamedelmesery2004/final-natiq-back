@@ -38,6 +38,29 @@ const companySchema = new mongoose.Schema(
         welcomeMessage: { type: String, default: 'Welcome! How can we help you today?' },
       },
     },
+    integrations: {
+      webhooks: [{
+        name: { type: String, required: true },
+        url: { type: String, required: true },
+        secret: { type: String, required: true },
+        events: [{ type: String, enum: ['ticket_created', 'ticket_updated', 'ticket_resolved', 'message_received'] }],
+        isActive: { type: Boolean, default: true }
+      }],
+      apiKeys: [{
+        name: { type: String, required: true },
+        key: { type: String, required: true, unique: true, sparse: true },
+        permissions: [{ type: String, enum: ['read_tickets', 'write_tickets', 'manage_agents', 'all'] }],
+        isActive: { type: Boolean, default: true },
+        createdAt: { type: Date, default: Date.now }
+      }],
+      aiModels: {
+        provider: { type: String, enum: ['openai', 'anthropic', 'custom'], default: 'openai' },
+        modelName: { type: String, default: 'gpt-4o-mini' },
+        apiKey: { type: String, default: null },
+        temperature: { type: Number, default: 0.7, min: 0, max: 2 },
+        maxTokens: { type: Number, default: 2000 }
+      }
+    },
     settings: {
       aiEnabled: { type: Boolean, default: true },
       escalationThreshold: { type: Number, default: 0.5, min: 0, max: 1 },

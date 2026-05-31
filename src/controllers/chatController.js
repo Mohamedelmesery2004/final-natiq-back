@@ -1,9 +1,11 @@
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../repositories/index.js';
 import path from 'path';
 import chatSessionManager from '../services/chat/chatSessionManager.js';
 import messageProcessor from '../services/chat/messageProcessor.js';
 import BaseController from './baseController.js';
 import { getIO } from '../sockets/index.js';
 import ApiError from '../utils/apiError.js';
+import config from '../config/index.js';
 
 class ChatController extends BaseController {
 
@@ -58,6 +60,42 @@ class ChatController extends BaseController {
       escalated: result.escalated,
       ticketNumber: result.ticket?.ticketNumber || null,
     });
+  });
+
+  generateTTS = this.catchAsync(async (req, res) => {
+    const { text } = req.body;
+    if (!text) throw new ApiError('Text is required', 400);
+
+    const apiKey = config.elevenlabs?.apiKey;
+    if (!apiKey) throw new ApiError('ElevenLabs API key is not configured in backend', 500);
+
+    const voiceId = "pNInz6obpgDQGcFmaJgB"; // Adam
+    const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'xi-api-key': apiKey
+      },
+      body: JSON.stringify({
+        text,
+        model_id: "eleven_multilingual_v2",
+        voice_settings: { stability: 0.5, similarity_boost: 0.75 }
+      })
+    });
+
+    if (!response.ok) {
+      throw new ApiError('ElevenLabs API failed', response.status);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    res.set({
+      'Content-Type': 'audio/mpeg',
+      'Content-Length': buffer.length
+    });
+
+    res.send(buffer);
   });
 
   sendMediaMessage = this.catchAsync(async (req, res) => {
@@ -154,6 +192,28 @@ class ChatController extends BaseController {
     }
 
     this.sendSuccess(res, { session: { sessionId: session.sessionId, status: session.status } }, 'Session closed');
+  });
+
+  uploadSessionRecording = this.catchAsync(async (req, res) => {
+    const { sessionId } = req.params;
+
+    if (!req.file) {
+      throw ApiError.badRequest('No audio file provided');
+    }
+
+    const recordingUrl = `/uploads/calls/${req.file.filename}`;
+
+    const session = await chatSessionRepo.findOne({ sessionId, companyId: req.companyId });
+    if (!session) {
+      throw ApiError.notFound('Session not found');
+    }
+    
+    // We add a recordingUrl to the session metadata or context
+    session.context = session.context || {};
+    session.context.recordingUrl = recordingUrl;
+    await session.save();
+
+    this.sendSuccess(res, { session }, 'Session recording uploaded successfully');
   });
 
 }

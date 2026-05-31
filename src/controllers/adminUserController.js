@@ -1,3 +1,4 @@
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../repositories/index.js';
 import { User } from '../models/index.js';
 import ApiError from '../utils/apiError.js';
 import { ROLES } from '../constants/index.js';
@@ -13,7 +14,7 @@ class AdminUserController extends BaseController {
       throw ApiError.forbidden('Team leaders cannot create company managers');
     }
 
-    const existing = await User.findOne({ companyId: req.companyId, email });
+    const existing = await userRepo.findOne({ companyId: req.companyId, email });
     if (existing) {
       throw ApiError.conflict('User with this email already exists in this company');
     }
@@ -31,7 +32,7 @@ class AdminUserController extends BaseController {
       payload.teamLeaderId = teamLeaderId || null;
     }
 
-    const user = await User.create(payload);
+    const user = await userRepo.create(payload);
 
     await recordAudit({
       companyId: req.companyId,
@@ -58,8 +59,8 @@ class AdminUserController extends BaseController {
       ];
     }
 
-    const total = await User.countDocuments(filter);
-    const users = await User.find(filter)
+    const total = await userRepo.count(filter);
+    const users = await userRepo.model.find(filter)
       .sort({ createdAt: -1 })
       .skip((parseInt(page) - 1) * parseInt(limit))
       .limit(parseInt(limit))
@@ -75,7 +76,7 @@ class AdminUserController extends BaseController {
   });
 
   getUser = this.catchAsync(async (req, res) => {
-    const user = await User.findOne({ _id: req.params.id, companyId: req.companyId })
+    const user = await userRepo.model.findOne({ _id: req.params.id, companyId: req.companyId })
       .select('-passwordHash')
       .populate('teamLeaderId', 'name email');
     if (!user) throw ApiError.notFound('User not found');
@@ -83,7 +84,7 @@ class AdminUserController extends BaseController {
   });
 
   updateUser = this.catchAsync(async (req, res) => {
-    const user = await User.findOne({ _id: req.params.id, companyId: req.companyId });
+    const user = await userRepo.findOne({ _id: req.params.id, companyId: req.companyId });
     if (!user) throw ApiError.notFound('User not found');
 
     const allowed = ['name', 'phone', 'role', 'isActive', 'profileImage', 'teamLeaderId'];
@@ -118,7 +119,7 @@ class AdminUserController extends BaseController {
   });
 
   deleteUser = this.catchAsync(async (req, res) => {
-    const user = await User.findOne({ _id: req.params.id, companyId: req.companyId });
+    const user = await userRepo.findOne({ _id: req.params.id, companyId: req.companyId });
     if (!user) throw ApiError.notFound('User not found');
 
     user.isActive = false;

@@ -1,3 +1,4 @@
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../repositories/index.js';
 import { User, Ticket, ChatSession, QAAnalysis, Call } from '../models/index.js';
 import { ROLES, TICKET_STATUS } from '../constants/index.js';
 import ApiError from '../utils/apiError.js';
@@ -10,7 +11,7 @@ class TeamLeaderService {
   }
 
   async _teamAgentObjectIds(companyId, leaderUserId) {
-    const agents = await User.find({
+    const agents = await userRepo.model.find({
       companyId,
       role: ROLES.AGENT,
       teamLeaderId: leaderUserId,
@@ -56,19 +57,19 @@ class TeamLeaderService {
         unassignedTickets,
         resolvedToday,
       ] = await Promise.all([
-        User.countDocuments({ companyId, role: ROLES.AGENT, isActive: true }),
-        Ticket.countDocuments({
+        userRepo.count({ companyId, role: ROLES.AGENT, isActive: true }),
+        ticketRepo.count({
           companyId,
-          status: { $in: [TICKET_STATUS.OPEN, TICKET_STATUS.IN_PROGRESS] },
+          status: { $in: [TICKET_STATUS.PENDING, TICKET_STATUS.OPENED] },
         }),
-        Ticket.countDocuments({
+        ticketRepo.count({
           companyId,
-          status: TICKET_STATUS.OPEN,
+          status: TICKET_STATUS.PENDING,
           assignedTo: null,
         }),
-        Ticket.countDocuments({
+        ticketRepo.count({
           companyId,
-          status: TICKET_STATUS.RESOLVED,
+          status: TICKET_STATUS.CLOSED,
           resolvedAt: { $gte: today },
         }),
       ]);
@@ -89,29 +90,29 @@ class TeamLeaderService {
       unassignedTickets,
       resolvedToday,
     ] = await Promise.all([
-      User.countDocuments({
+      userRepo.count({
         companyId,
         role: ROLES.AGENT,
         teamLeaderId: access.userId,
         isActive: true,
       }),
       teamIds.length
-        ? Ticket.countDocuments({
+        ? ticketRepo.count({
             companyId,
             assignedTo: { $in: teamIds },
-            status: { $in: [TICKET_STATUS.OPEN, TICKET_STATUS.IN_PROGRESS] },
+            status: { $in: [TICKET_STATUS.PENDING, TICKET_STATUS.OPENED] },
           })
         : 0,
-      Ticket.countDocuments({
+      ticketRepo.count({
         companyId,
-        status: TICKET_STATUS.OPEN,
+        status: TICKET_STATUS.PENDING,
         assignedTo: null,
       }),
       teamIds.length
-        ? Ticket.countDocuments({
+        ? ticketRepo.count({
             companyId,
             assignedTo: { $in: teamIds },
-            status: TICKET_STATUS.RESOLVED,
+            status: TICKET_STATUS.CLOSED,
             resolvedAt: { $gte: today },
           })
         : 0,
@@ -128,7 +129,7 @@ class TeamLeaderService {
   async getAgentProfile(companyId, agentId, access) {
     this._mustAccessAgent(access, agentId);
 
-    const agent = await User.findOne({
+    const agent = await userRepo.findOne({
       _id: agentId,
       companyId,
       role: ROLES.AGENT,
@@ -146,19 +147,19 @@ class TeamLeaderService {
       agentQuery.teamLeaderId = access.userId;
     }
 
-    const agents = await User.find(agentQuery)
+    const agents = await userRepo.model.find(agentQuery)
       .select('_id name email profileImage lastLogin teamLeaderId')
       .lean();
 
     const agentIds = agents.map((a) => a._id);
 
     const activeTicketsCount = agentIds.length
-      ? await Ticket.aggregate([
+      ? await ticketRepo.aggregate([
           {
             $match: {
               companyId: new mongoose.Types.ObjectId(companyId),
               assignedTo: { $in: agentIds },
-              status: { $in: [TICKET_STATUS.OPEN, TICKET_STATUS.IN_PROGRESS] },
+              status: { $in: [TICKET_STATUS.PENDING, TICKET_STATUS.OPENED] },
             },
           },
           {
@@ -212,10 +213,10 @@ class TeamLeaderService {
       normalizedPeriod = 'weekly';
     }
 
-    const tickets = await Ticket.find({
+    const tickets = await ticketRepo.model.find({
       companyId,
       assignedTo: agentId,
-      status: TICKET_STATUS.RESOLVED,
+      status: TICKET_STATUS.CLOSED,
       resolvedAt: { $gte: startDate },
     }).lean();
 
@@ -291,7 +292,7 @@ class TeamLeaderService {
   async bulkAssignTickets(companyId, ticketIds, agentId, access) {
     this._mustAccessAgent(access, agentId);
 
-    const validAgent = await User.findOne({
+    const validAgent = await userRepo.findOne({
       _id: agentId,
       companyId,
       role: ROLES.AGENT,
@@ -301,7 +302,7 @@ class TeamLeaderService {
       throw ApiError.badRequest('Invalid agent specified');
     }
 
-    const result = await Ticket.updateMany(
+    const result = await ticketRepo.updateMany(
       {
         _id: { $in: ticketIds },
         companyId,
@@ -352,13 +353,13 @@ class TeamLeaderService {
 
     const skip = (page - 1) * limit;
     const [tickets, total] = await Promise.all([
-      Ticket.find(filter)
+      ticketRepo.model.find(filter)
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
         .populate('assignedTo', 'name email')
         .lean(),
-      Ticket.countDocuments(filter),
+      ticketRepo.count(filter),
     ]);
 
     return { tickets, total, page, pages: Math.ceil(total / limit) };
@@ -368,17 +369,17 @@ class TeamLeaderService {
     const filter = {
       companyId,
       assignedTo: null,
-      status: TICKET_STATUS.OPEN,
+      status: TICKET_STATUS.PENDING,
     };
     const skip = (page - 1) * limit;
     const [tickets, total] = await Promise.all([
-      Ticket.find(filter)
+      ticketRepo.model.find(filter)
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
         .populate('userId', 'name email')
         .lean(),
-      Ticket.countDocuments(filter),
+      ticketRepo.count(filter),
     ]);
 
     return {
@@ -393,7 +394,7 @@ class TeamLeaderService {
   }
 
   async getTicketMessages(companyId, ticketId, access) {
-    const ticket = await Ticket.findOne({ _id: ticketId, companyId })
+    const ticket = await ticketRepo.model.findOne({ _id: ticketId, companyId })
       .populate('assignedTo', 'name email')
       .lean();
     if (!ticket) throw ApiError.notFound('Ticket not found');
@@ -404,7 +405,7 @@ class TeamLeaderService {
 
     let messages = [];
     if (ticket.context?.sessionId) {
-      const session = await ChatSession.findOne({ sessionId: ticket.context.sessionId }).lean();
+      const session = await chatSessionRepo.model.findOne({ sessionId: ticket.context.sessionId }).lean();
       if (session) messages = session.messages || [];
     }
 
@@ -412,13 +413,13 @@ class TeamLeaderService {
   }
 
   async appendQATeamLeaderNote(companyId, ticketId, leaderId, content, access) {
-    const ticket = await Ticket.findOne({ _id: ticketId, companyId }).lean();
+    const ticket = await ticketRepo.model.findOne({ _id: ticketId, companyId }).lean();
     if (!ticket) throw ApiError.notFound('Ticket not found');
     if (!this._ticketAccessAllowed(access, ticket)) {
       throw ApiError.forbidden('You cannot update analysis for this ticket');
     }
 
-    const doc = await QAAnalysis.findOneAndUpdate(
+    const doc = await qaAnalysisRepo.model.findOneAndUpdate(
       { companyId, ticketId },
       {
         $push: {
@@ -474,14 +475,14 @@ class TeamLeaderService {
     const skip = (parseInt(page, 10) - 1) * parseInt(limit, 10);
 
     const [calls, total] = await Promise.all([
-      Call.find(filter)
+      callRepo.model.find(filter)
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit, 10))
         .populate('customerId', 'name email')
         .populate('agentId', 'name email')
         .lean(),
-      Call.countDocuments(filter),
+      callRepo.count(filter),
     ]);
 
     return {
@@ -495,7 +496,7 @@ class TeamLeaderService {
   async appendAgentSupervisorNote(companyId, agentId, authorId, content, access) {
     this._mustAccessAgent(access, agentId);
 
-    const agent = await User.findOne({
+    const agent = await userRepo.findOne({
       _id: agentId,
       companyId,
       role: ROLES.AGENT,

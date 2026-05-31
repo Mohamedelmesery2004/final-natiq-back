@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import agentController from '../controllers/agentController.js';
+import taskController from '../controllers/taskController.js';
+import notificationController from '../controllers/notificationController.js';
 import { protect, tenantIsolation, allowRoles } from '../middlewares/authMiddleware.js';
 import validate from '../middlewares/validateMiddleware.js';
 import * as agentValidator from '../validators/agentValidator.js';
@@ -28,5 +30,16 @@ router.post('/tickets/:ticketId/resolve', validate(agentValidator.ticketIdParam)
 router.post('/tickets/:ticketId/close', validate(agentValidator.ticketIdParam), agentController.closeTicket);
 
 router.get('/chat-history/:sessionId', validate(agentValidator.sessionIdParam), agentController.getChatHistory);
+
+// Tasks
+router.get('/tasks', taskController.getTasks);
+router.post('/tasks', taskController.createTask);
+router.patch('/tasks/:taskId', taskController.updateTask);
+router.delete('/tasks/:taskId', taskController.deleteTask);
+
+// Notifications
+router.get('/notifications', notificationController.getNotifications);
+router.patch('/notifications/read-all', notificationController.markAllAsRead);
+router.patch('/notifications/:notificationId/read', notificationController.markAsRead);
 
 export default router;

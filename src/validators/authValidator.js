@@ -7,7 +7,7 @@ const register = {
     email: Joi.string().required().email().trim().lowercase(),
     password: Joi.string().required().min(6).max(128),
     phone: Joi.string().trim().allow(null, ''),
-  }),
+  }).options({ stripUnknown: true, abortEarly: false }),
 };
 
 const login = {
@@ -15,7 +15,7 @@ const login = {
     email: Joi.string().required().email().trim().lowercase(),
     password: Joi.string().required(),
     companySlug: Joi.string().required().trim().lowercase(),
-  }),
+  }).options({ stripUnknown: true, abortEarly: false }),
 };
 
 export { register, login };

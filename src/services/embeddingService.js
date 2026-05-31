@@ -1,3 +1,4 @@
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../repositories/index.js';
 import { KnowledgeItem } from '../models/index.js';
 import { generateEmbedding, generateEmbeddings } from '../utils/embeddings.js';
 

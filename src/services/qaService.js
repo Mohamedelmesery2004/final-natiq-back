@@ -1,3 +1,4 @@
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../repositories/index.js';
 import axios from 'axios';
 import config from '../config/index.js';
 import ApiError from '../utils/apiError.js';
@@ -235,7 +236,7 @@ class QAService {
     } 
     // 2. Fall back to active ChatSession if snapshot is missing
     else if (ticket.context?.sessionId) {
-      const session = await ChatSession.findOne({
+      const session = await chatSessionRepo.findOne({
         companyId,
         sessionId: ticket.context.sessionId,
       }).select('messages');
@@ -275,7 +276,7 @@ class QAService {
       // Pull ticket to get agent/customer IDs if not in result
       const fullTicket = await ticketService.getTicketById(companyId, ticketId);
 
-      const savedAnalysis = await QAAnalysis.findOneAndUpdate(
+      const savedAnalysis = await qaAnalysisRepo.model.findOneAndUpdate(
         { ticketId },
         {
           companyId,

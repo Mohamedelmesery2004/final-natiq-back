@@ -12,13 +12,13 @@ const createKnowledge = {
     features: Joi.array().items(Joi.string().trim()),
     slug: Joi.string().trim().lowercase().pattern(/^[a-z0-9-]+$/),
     isActive: Joi.boolean(),
-  }),
+  }).options({ stripUnknown: true, abortEarly: false }),
 };
 
 const updateKnowledge = {
   params: Joi.object({
     id: Joi.string().required(),
-  }),
+  }).options({ stripUnknown: true, abortEarly: false }),
   body: Joi.object({
     type: Joi.string().valid(...Object.values(KNOWLEDGE_TYPE)),
     title: Joi.string().trim().min(2).max(200),
@@ -26,7 +26,7 @@ const updateKnowledge = {
     content: Joi.string().min(10),
     features: Joi.array().items(Joi.string().trim()),
     isActive: Joi.boolean(),
-  }),
+  }).options({ stripUnknown: true, abortEarly: false }),
 };
 
 const listKnowledge = {
@@ -36,7 +36,7 @@ const listKnowledge = {
     type: Joi.string().valid(...Object.values(KNOWLEDGE_TYPE)),
     isActive: Joi.boolean(),
     search: Joi.string().trim(),
-  }),
+  }).options({ stripUnknown: true, abortEarly: false }),
 };
 
 export { createKnowledge, updateKnowledge, listKnowledge };

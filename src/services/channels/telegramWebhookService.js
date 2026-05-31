@@ -1,3 +1,4 @@
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../../repositories/index.js';
 import axios from 'axios';
 import { Company, User, ChatSession, Ticket } from '../../models/index.js';
 import chatSessionManager from '../chat/chatSessionManager.js';
@@ -46,14 +47,14 @@ class TelegramWebhookService {
 
     let company = null;
     if (providedSlug) {
-      company = await Company.findOne({ slug: providedSlug, isActive: true });
+      company = await companyRepo.findOne({ slug: providedSlug, isActive: true });
       if (!company) {
         return { ok: true, error: 'Company not found' };
       }
     } else {
       // Fallback: if only one active company has Telegram configured, use it.
       // This avoids "silent no reply" when webhook URL misses companySlug.
-      const fallbackCompanies = await Company.find({
+      const fallbackCompanies = await companyRepo.model.find({
         isActive: true,
         'channelsConfig.telegram.isActive': true,
         'channelsConfig.telegram.botToken': { $exists: true, $ne: '' },
@@ -79,7 +80,7 @@ class TelegramWebhookService {
       const data = callback_query.data;
       const chatId = callback_query.message.chat.id.toString();
 
-      let user = await User.findOne({ companyId: company._id, telegramChatId: chatId });
+      let user = await userRepo.findOne({ companyId: company._id, telegramChatId: chatId });
 
       if (data && data.startsWith('feedback:')) {
         const parts = data.split(':');
@@ -116,13 +117,13 @@ class TelegramWebhookService {
     const voice = message.voice || message.audio;
     const document = message.document;
 
-    let user = await User.findOne({ companyId: company._id, telegramChatId: chatId });
+    let user = await userRepo.findOne({ companyId: company._id, telegramChatId: chatId });
 
     if (!user) {
       const telegramName = [from.first_name, from.last_name].filter(Boolean).join(' ') || 'Telegram User';
       const email = `tg_${chatId}@telegram.placeholder`;
 
-      user = await User.create({
+      user = await userRepo.create({
         companyId: company._id,
         name: telegramName,
         email,
@@ -134,7 +135,7 @@ class TelegramWebhookService {
     }
 
     if (text === '/start') {
-      const activeSession = await ChatSession.findOne({
+      const activeSession = await chatSessionRepo.findOne({
         companyId: company._id,
         userId: user._id,
         channel: CHANNELS.TELEGRAM,
@@ -189,7 +190,7 @@ class TelegramWebhookService {
 
     if (user.onboardingStep === 5) {
       if (text === '✅ نعم، إنهاء المحادثة') {
-        const activeSession = await ChatSession.findOne({
+        const activeSession = await chatSessionRepo.findOne({
           companyId: company._id,
           userId: user._id,
           channel: CHANNELS.TELEGRAM,
@@ -203,17 +204,17 @@ class TelegramWebhookService {
           await activeSession.save();
         }
 
-        const ticketsToResolve = await Ticket.find({
+        const ticketsToResolve = await ticketRepo.model.find({
           companyId: company._id,
           userId: user._id,
-          status: { $in: [TICKET_STATUS.OPEN, TICKET_STATUS.IN_PROGRESS] }
+          status: { $in: [TICKET_STATUS.PENDING, TICKET_STATUS.OPENED] }
         });
 
         if (ticketsToResolve.length > 0) {
           const messages = activeSession?.messages || [];
           
           for (const t of ticketsToResolve) {
-            t.status = TICKET_STATUS.RESOLVED;
+            t.status = TICKET_STATUS.CLOSED;
             t.resolvedAt = new Date();
             t.context.analysisStatus = 'pending';
             if (messages.length > 0) {
@@ -265,10 +266,10 @@ class TelegramWebhookService {
         );
         return { ok: true };
       } else if (text === '🎫 تذكرة دعم فني') {
-        const activeTicket = await Ticket.findOne({
+        const activeTicket = await ticketRepo.findOne({
           companyId: company._id,
           userId: user._id,
-          status: { $in: [TICKET_STATUS.OPEN, TICKET_STATUS.IN_PROGRESS] }
+          status: { $in: [TICKET_STATUS.PENDING, TICKET_STATUS.OPENED] }
         });
 
         if (activeTicket) {
@@ -368,14 +369,14 @@ class TelegramWebhookService {
       const mappedCategory = categoryMap[text] || 'other';
 
       const ticketNumber = await messageProcessor.generateTicketNumber(company._id);
-      const ticket = await Ticket.create({
+      const ticket = await ticketRepo.create({
         companyId: company._id,
         ticketNumber,
         userId: user._id,
         channel: CHANNELS.TELEGRAM,
         category: mappedCategory,
         priority: TICKET_PRIORITY.MEDIUM,
-        status: TICKET_STATUS.OPEN,
+        status: TICKET_STATUS.PENDING,
         context: {
           sessionId: null, 
           lastUserMessage: 'Initial Ticket Category Selection',
@@ -392,7 +393,7 @@ class TelegramWebhookService {
       return { ok: true };
     }
 
-    let session = await ChatSession.findOne({
+    let session = await chatSessionRepo.findOne({
       companyId: company._id,
       userId: user._id,
       channel: CHANNELS.TELEGRAM,
@@ -401,10 +402,10 @@ class TelegramWebhookService {
 
     if (!session) {
       session = await chatSessionManager.createSession(company._id, user._id, CHANNELS.TELEGRAM);
-      const latestTicket = await Ticket.findOne({
+      const latestTicket = await ticketRepo.model.findOne({
         companyId: company._id,
         userId: user._id,
-        status: { $in: [TICKET_STATUS.OPEN, TICKET_STATUS.IN_PROGRESS] }
+        status: { $in: [TICKET_STATUS.PENDING, TICKET_STATUS.OPENED] }
       }).sort({ createdAt: -1 });
 
       if (latestTicket) {
@@ -485,7 +486,7 @@ class TelegramWebhookService {
 
                 io.of('/admin').to(`company:${company._id}`).emit('chat:customerMessage', msgPayload);
 
-        const linkedTicket = await Ticket.findOne({
+        const linkedTicket = await ticketRepo.findOne({
           companyId: company._id,
           'context.sessionId': session.sessionId,
         });
@@ -509,8 +510,8 @@ class TelegramWebhookService {
       let ticketToEmit = null;
 
       if (session.summary?.linkedTicketId) {
-        const ticket = await Ticket.findById(session.summary.linkedTicketId);
-        if (ticket && ![TICKET_STATUS.RESOLVED, TICKET_STATUS.CLOSED].includes(ticket.status)) {
+        const ticket = await ticketRepo.model.findById(session.summary.linkedTicketId);
+        if (ticket && ![TICKET_STATUS.CLOSED, TICKET_STATUS.CLOSED].includes(ticket.status)) {
           if (ticket.priority !== TICKET_PRIORITY.HIGH) {
              ticket.priority = TICKET_PRIORITY.HIGH;
              await ticket.save();
@@ -521,14 +522,14 @@ class TelegramWebhookService {
 
       if (!ticketToEmit) {
         const ticketNumber = await messageProcessor.generateTicketNumber(company._id);
-        const ticket = await Ticket.create({
+        const ticket = await ticketRepo.create({
           companyId: company._id,
           ticketNumber,
           userId: user._id,
           channel: CHANNELS.TELEGRAM,
           category: 'other',
           priority: TICKET_PRIORITY.HIGH,
-          status: TICKET_STATUS.OPEN,
+          status: TICKET_STATUS.PENDING,
           context: {
             sessionId: session.sessionId,
             lastUserMessage: text,
@@ -624,9 +625,9 @@ class TelegramWebhookService {
       await session.save();
 
       if (session.summary?.linkedTicketId) {
-        const ticket = await Ticket.findById(session.summary.linkedTicketId);
-        if (ticket && ticket.status !== TICKET_STATUS.RESOLVED) {
-          ticket.status = TICKET_STATUS.RESOLVED;
+        const ticket = await ticketRepo.model.findById(session.summary.linkedTicketId);
+        if (ticket && ticket.status !== TICKET_STATUS.CLOSED) {
+          ticket.status = TICKET_STATUS.CLOSED;
           ticket.resolvedAt = new Date();
           ticket.context.analysisStatus = 'pending';
           if (session.messages?.length > 0) {
@@ -673,10 +674,10 @@ class TelegramWebhookService {
 
   async sendFeedbackRequest(companyId, ticketId) {
     try {
-      const ticket = await Ticket.findOne({ _id: ticketId, companyId }).populate('userId');
+      const ticket = await ticketRepo.model.findOne({ _id: ticketId, companyId }).populate('userId');
       if (!ticket || !ticket.userId || !ticket.userId.telegramChatId) return;
 
-      const company = await Company.findById(companyId);
+      const company = await companyRepo.model.findById(companyId);
       const botToken = company.channelsConfig?.telegram?.botToken || config.telegram.botToken;
       if (!botToken) return;
 

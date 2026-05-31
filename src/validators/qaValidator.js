@@ -17,8 +17,8 @@ const analyzeRaw = {
           agentId:   Joi.string().optional(),
           content:   Joi.string().trim().max(5000).required(),
           createdAt: Joi.alternatives().try(Joi.date(), Joi.string()).optional(),
-        }).unknown(true)
-      )
+        }).options({ stripUnknown: true, abortEarly: false }).unknown(true)
+      ).options({ stripUnknown: true })
       .optional(),
 
     conversation: Joi.string().trim().max(20000).optional(),
@@ -45,7 +45,7 @@ const analyzeRaw = {
 const analyzeById = {
   params: Joi.object({
     ticketId: Joi.string().required(),
-  }),
+  }).options({ stripUnknown: true, abortEarly: false }),
 };
 
 const getResults = {
@@ -57,13 +57,13 @@ const getResults = {
     sentiment: Joi.string().optional(),
     status: Joi.string().optional(),
     category: Joi.string().optional(),
-  }),
+  }).options({ stripUnknown: true, abortEarly: false }),
 };
 
 const getResultById = {
   params: Joi.object({
     id: Joi.string().required(),
-  }),
+  }).options({ stripUnknown: true, abortEarly: false }),
 };
 
 export { analyzeRaw, analyzeById, getResults, getResultById };

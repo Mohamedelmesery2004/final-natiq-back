@@ -12,13 +12,13 @@ const createUser = {
       .required(),
     profileImage: Joi.string().uri().allow(null, ''),
     teamLeaderId: Joi.string().optional().allow(null),
-  }),
+  }).options({ stripUnknown: true, abortEarly: false }),
 };
 
 const updateUser = {
   params: Joi.object({
     id: Joi.string().required(),
-  }),
+  }).options({ stripUnknown: true, abortEarly: false }),
   body: Joi.object({
     name: Joi.string().trim().min(2).max(100),
     phone: Joi.string().trim().allow(null, ''),
@@ -26,7 +26,7 @@ const updateUser = {
     isActive: Joi.boolean(),
     profileImage: Joi.string().uri().allow(null, ''),
     teamLeaderId: Joi.string().optional().allow(null),
-  }),
+  }).options({ stripUnknown: true, abortEarly: false }),
 };
 
 const listUsers = {
@@ -36,7 +36,7 @@ const listUsers = {
     role: Joi.string().valid(...Object.values(ROLES)),
     isActive: Joi.boolean(),
     search: Joi.string().trim(),
-  }),
+  }).options({ stripUnknown: true, abortEarly: false }),
 };
 
 export { createUser, updateUser, listUsers };

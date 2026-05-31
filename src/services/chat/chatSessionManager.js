@@ -1,3 +1,4 @@
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../../repositories/index.js';
 import { v4 as uuidv4 } from 'uuid';
 import { ChatSession } from '../../models/index.js';
 import { logEvent } from '../eventLogService.js';
@@ -53,7 +54,7 @@ class ChatSessionManager {
   }
 
   async closeSession(companyId, sessionId) {
-    const session = await ChatSession.findOne({ companyId, sessionId });
+    const session = await chatSessionRepo.findOne({ companyId, sessionId });
     if (!session) throw new Error('Session not found');
 
     session.status = CHAT_STATUS.CLOSED;
@@ -68,7 +69,7 @@ class ChatSessionManager {
     if (status) filter.status = status;
 
     const total = await ChatSession.countDocuments(filter);
-    const sessions = await ChatSession.find(filter)
+    const sessions = await chatSessionRepo.model.find(filter)
       .sort({ lastActivity: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
@@ -92,7 +93,7 @@ class ChatSessionManager {
     if (userId) filter.userId = userId;
 
     const total = await ChatSession.countDocuments(filter);
-    const sessions = await ChatSession.find(filter)
+    const sessions = await chatSessionRepo.model.find(filter)
       .sort({ lastActivity: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
@@ -111,7 +112,7 @@ class ChatSessionManager {
   }
 
   async getSessionById(companyId, sessionId) {
-    return ChatSession.findOne({ companyId, sessionId })
+    return chatSessionRepo.model.findOne({ companyId, sessionId })
       .populate('userId', 'name email')
       .populate('summary.linkedTicketId', 'ticketNumber status')
       .populate('summary.relatedKnowledgeIds', 'title type');

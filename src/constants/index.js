@@ -32,12 +32,12 @@ export const CHANNELS = {
   TELEGRAM: 'telegram',
   WHATSAPP_MOCK: 'whatsapp_mock',
   MESSENGER_MOCK: 'messenger_mock',
+  VOICE: 'voice',
 };
 
 export const TICKET_STATUS = {
-  OPEN: 'open',
-  IN_PROGRESS: 'in_progress',
-  RESOLVED: 'resolved',
+  PENDING: 'pending',
+  OPENED: 'opened',
   CLOSED: 'closed',
 };
 
@@ -73,7 +73,7 @@ export const KNOWLEDGE_TYPE = {
 export const EVENT_TYPES = {
   CHAT_MESSAGE: 'chat_message',
   CHAT_SESSION_CREATED: 'chat_session_created',
-  TICKET_CREATED: 'ticket_created', 
+  TICKET_CREATED: 'ticket_created',
   TICKET_UPDATED: 'ticket_updated',
   TICKET_RESOLVED: 'ticket_resolved',
   AI_ESCALATED: 'ai_escalated',

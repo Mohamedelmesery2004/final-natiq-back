@@ -1,9 +1,10 @@
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../../repositories/index.js';
 import { User } from '../../models/index.js';
 import ApiError from '../../utils/apiError.js';
 
 class AgentProfileService {
   async updateAgentProfile(agentId, updateData) {
-    const user = await User.findById(agentId);
+    const user = await userRepo.model.findById(agentId);
     if (!user) throw ApiError.notFound('User not found');
 
     if (updateData.name !== undefined) user.name = updateData.name;

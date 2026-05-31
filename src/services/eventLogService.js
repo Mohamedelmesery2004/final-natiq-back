@@ -1,3 +1,4 @@
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../repositories/index.js';
 import { EventLog } from '../models/index.js';
 
 const logEvent = async ({ companyId, eventType, entityType, entityId, metadata = {} }) => {

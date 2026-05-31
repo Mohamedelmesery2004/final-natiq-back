@@ -1,3 +1,4 @@
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../repositories/index.js';
 import { Call } from '../models/index.js';
 import BaseController from './baseController.js';
 import ApiError from '../utils/apiError.js';
@@ -58,7 +59,7 @@ class CallController extends BaseController {
     const { page = 1, limit = 20 } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    const calls = await Call.find({
+    const calls = await callRepo.model.find({
       companyId: req.companyId,
       agentId: req.userId,
     })
@@ -68,7 +69,7 @@ class CallController extends BaseController {
       .populate('customerId', 'name email')
       .lean();
 
-    const total = await Call.countDocuments({
+    const total = await callRepo.count({
       companyId: req.companyId,
       agentId: req.userId,
     });
@@ -87,7 +88,7 @@ class CallController extends BaseController {
     const filter = { companyId: req.companyId };
     if (status) filter.status = status;
 
-    const calls = await Call.find(filter)
+    const calls = await callRepo.model.find(filter)
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit))
@@ -95,7 +96,7 @@ class CallController extends BaseController {
       .populate('agentId', 'name email')
       .lean();
 
-    const total = await Call.countDocuments(filter);
+    const total = await callRepo.count(filter);
 
     this.sendSuccess(res, { calls, total, page: parseInt(page), limit: parseInt(limit) });
   });

@@ -1,3 +1,4 @@
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../repositories/index.js';
 import { EventLog, ChatSession, Ticket } from '../models/index.js';
 import { TICKET_STATUS, EVENT_TYPES } from '../constants/index.js';
 
@@ -25,13 +26,13 @@ class AnalyticsService {
     ] = await Promise.all([
       ChatSession.countDocuments(sessionFilter),
       ChatSession.countDocuments({ ...sessionFilter, status: 'active' }),
-      Ticket.countDocuments(ticketFilter),
-      Ticket.countDocuments({ ...ticketFilter, status: TICKET_STATUS.OPEN }),
-      Ticket.countDocuments({ ...ticketFilter, status: TICKET_STATUS.IN_PROGRESS }),
-      Ticket.countDocuments({ ...ticketFilter, status: TICKET_STATUS.RESOLVED }),
+      ticketRepo.count(ticketFilter),
+      ticketRepo.count({ ...ticketFilter, status: TICKET_STATUS.PENDING }),
+      ticketRepo.count({ ...ticketFilter, status: TICKET_STATUS.OPENED }),
+      ticketRepo.count({ ...ticketFilter, status: TICKET_STATUS.CLOSED }),
     ]);
 
-    const avgFirstResponseAgg = await Ticket.aggregate([
+    const avgFirstResponseAgg = await ticketRepo.aggregate([
       {
         $match: {
           companyId,
@@ -55,7 +56,7 @@ class AnalyticsService {
       ? Math.round(avgFirstResponseAgg[0].avgTime / 60000)
       : 0;
 
-    const avgResolutionAgg = await Ticket.aggregate([
+    const avgResolutionAgg = await ticketRepo.aggregate([
       {
         $match: {
           companyId,
@@ -121,7 +122,7 @@ class AnalyticsService {
       ]),
     ]);
 
-    const topCategories = await Ticket.aggregate([
+    const topCategories = await ticketRepo.aggregate([
       { $match: ticketFilter },
       { $group: { _id: '$category', count: { $sum: 1 } } },
       { $sort: { count: -1 } },
@@ -148,11 +149,11 @@ class AnalyticsService {
       { $limit: 10 },
     ]);
 
-    const topAgents = await Ticket.aggregate([
+    const topAgents = await ticketRepo.aggregate([
       {
         $match: {
           companyId,
-          status: TICKET_STATUS.RESOLVED,
+          status: TICKET_STATUS.CLOSED,
           assignedTo: { $ne: null },
           ...(hasDateFilter ? { createdAt: dateFilter } : {}),
         },

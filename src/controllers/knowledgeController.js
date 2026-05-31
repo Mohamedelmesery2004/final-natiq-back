@@ -1,3 +1,4 @@
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../repositories/index.js';
 import { KnowledgeItem } from '../models/index.js';
 import slugify from 'slugify';
 import ApiError from '../utils/apiError.js';

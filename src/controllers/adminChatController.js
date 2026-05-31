@@ -1,3 +1,4 @@
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../repositories/index.js';
 import axios from 'axios';
 import chatSessionManager from '../services/chat/chatSessionManager.js';
 import { ChatSession, User, Company } from '../models/index.js';
@@ -44,7 +45,7 @@ const deleteSession = asyncHandler(async (req, res) => {
 });
 
 const takeoverSession = asyncHandler(async (req, res) => {
-  const session = await ChatSession.findOne({
+  const session = await chatSessionRepo.findOne({
     companyId: req.companyId,
     sessionId: req.params.sessionId,
   });
@@ -76,8 +77,8 @@ const takeoverSession = asyncHandler(async (req, res) => {
     metadata: { action: 'takeover', agentId: req.user._id },
   });
 
-  const company = await Company.findById(req.companyId);
-  const customer = await User.findById(session.userId);
+  const company = await companyRepo.model.findById(req.companyId);
+  const customer = await userRepo.model.findById(session.userId);
 
   if (session.channel === CHANNELS.TELEGRAM && customer?.telegramChatId) {
     const botToken = company?.channelsConfig?.telegram?.botToken;
@@ -101,7 +102,7 @@ const agentReply = asyncHandler(async (req, res) => {
     throw ApiError.badRequest('Message is required');
   }
 
-  let session = await ChatSession.findOne({
+  let session = await chatSessionRepo.findOne({
     companyId: req.companyId,
     sessionId: req.params.sessionId,
   });
@@ -137,8 +138,8 @@ const agentReply = asyncHandler(async (req, res) => {
     metadata: { agentId: req.user._id, message: message.substring(0, 200) },
   });
 
-  const company = await Company.findById(req.companyId);
-  const customer = await User.findById(session.userId);
+  const company = await companyRepo.model.findById(req.companyId);
+  const customer = await userRepo.model.findById(session.userId);
 
   if (session.channel === CHANNELS.TELEGRAM && customer?.telegramChatId) {
     const botToken = company?.channelsConfig?.telegram?.botToken;
@@ -168,7 +169,7 @@ const agentReply = asyncHandler(async (req, res) => {
 });
 
 const releaseSession = asyncHandler(async (req, res) => {
-  const session = await ChatSession.findOne({
+  const session = await chatSessionRepo.findOne({
     companyId: req.companyId,
     sessionId: req.params.sessionId,
   });
@@ -191,8 +192,8 @@ const releaseSession = asyncHandler(async (req, res) => {
   session.lastActivity = new Date();
   await session.save();
 
-  const company = await Company.findById(req.companyId);
-  const customer = await User.findById(session.userId);
+  const company = await companyRepo.model.findById(req.companyId);
+  const customer = await userRepo.model.findById(session.userId);
 
   if (session.channel === CHANNELS.TELEGRAM && customer?.telegramChatId) {
     const botToken = company?.channelsConfig?.telegram?.botToken;

@@ -1,3 +1,4 @@
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../repositories/index.js';
 import ticketService from '../services/ticketService.js';
 import BaseController from './baseController.js';
 import { ChatSession, Ticket } from '../models/index.js';
@@ -23,7 +24,7 @@ class TicketController extends BaseController {
     }
 
     // Find the ticket and verify it belongs to this customer
-    const ticket = await Ticket.findOne({
+    const ticket = await ticketRepo.findOne({
       _id: ticketId,
       companyId: req.companyId,
       userId: req.userId,
@@ -33,7 +34,7 @@ class TicketController extends BaseController {
     // Append the customer message to the linked ChatSession (correct data model)
     let session = null;
     if (ticket.context?.sessionId) {
-      session = await ChatSession.findOne({
+      session = await chatSessionRepo.findOne({
         companyId: req.companyId,
         sessionId: ticket.context.sessionId,
       });

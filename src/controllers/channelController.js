@@ -1,3 +1,4 @@
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../repositories/index.js';
 import BaseController from './baseController.js';
 import telegramWebhookService from '../services/channels/telegramWebhookService.js';
 import whatsappWebhookService from '../services/channels/whatsappWebhookService.js';

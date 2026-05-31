@@ -8,6 +8,9 @@ import TicketFeedback from './ticketFeedback.js';
 import QAAnalysis from './qaAnalysis.js';
 import Call from './call.js';
 import AuditLog from './auditLog.js';
+import InternalMessage from './internalMessage.js';
+import Task from './task.js';
+import Notification from './notification.js';
 
 export {
   Company,
@@ -20,4 +23,7 @@ export {
   QAAnalysis,
   Call,
   AuditLog,
+  InternalMessage,
+  Task,
+  Notification,
 };

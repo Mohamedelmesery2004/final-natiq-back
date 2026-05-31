@@ -1,3 +1,4 @@
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../../repositories/index.js';
 import mongoose from 'mongoose';
 import { Ticket, User, TicketFeedback } from '../../models/index.js';
 import { TICKET_STATUS, TICKET_PRIORITY } from '../../constants/index.js';
@@ -13,7 +14,7 @@ class AgentDashboardService {
     if (hasDateFilter) baseMatch.createdAt = dateFilter;
 
     const [
-      flaggedTicketsCount,
+      assignedTicketsCount,
       runningTicketsCount,
       pendingTicketsCount,
       resolvedTicketsCount,
@@ -21,26 +22,39 @@ class AgentDashboardService {
       totalAssigned,
       avgFirstResponseAgg,
       avgResolutionAgg,
+      callStatsAgg,
     ] = await Promise.all([
-      Ticket.countDocuments({
-        ...baseMatch,
-        priority: { $in: [TICKET_PRIORITY.URGENT, TICKET_PRIORITY.HIGH] },
-        status: { $nin: [TICKET_STATUS.CLOSED] },
+      ticketRepo.count({ ...baseMatch, status: TICKET_STATUS.PENDING }),
+      ticketRepo.count({ ...baseMatch, status: TICKET_STATUS.OPENED }),
+      ticketRepo.count({
+        companyId: new mongoose.Types.ObjectId(companyId),
+        ...(hasDateFilter ? { createdAt: dateFilter } : {}),
+        status: TICKET_STATUS.PENDING,
+        assignedTo: null,
       }),
-      Ticket.countDocuments({ ...baseMatch, status: TICKET_STATUS.IN_PROGRESS }),
-      Ticket.countDocuments({ ...baseMatch, status: TICKET_STATUS.OPEN }),
-      Ticket.countDocuments({ ...baseMatch, status: TICKET_STATUS.RESOLVED }),
-      Ticket.countDocuments({ ...baseMatch, status: TICKET_STATUS.CLOSED }),
-      Ticket.countDocuments(baseMatch),
-      Ticket.aggregate([
+      ticketRepo.count({ ...baseMatch, status: TICKET_STATUS.CLOSED }),
+      ticketRepo.count({ ...baseMatch, status: TICKET_STATUS.CLOSED }),
+      ticketRepo.count(baseMatch),
+      ticketRepo.aggregate([
         { $match: { ...baseMatch, firstResponseAt: { $ne: null } } },
         { $project: { responseTime: { $subtract: ['$firstResponseAt', '$createdAt'] } } },
         { $group: { _id: null, avgTime: { $avg: '$responseTime' } } },
       ]),
-      Ticket.aggregate([
+      ticketRepo.aggregate([
         { $match: { ...baseMatch, resolvedAt: { $ne: null } } },
         { $project: { resolutionTime: { $subtract: ['$resolvedAt', '$createdAt'] } } },
         { $group: { _id: null, avgTime: { $avg: '$resolutionTime' } } },
+      ]),
+      callRepo.aggregate([
+        { $match: baseMatch },
+        { $group: {
+            _id: null,
+            totalCalls: { $sum: 1 },
+            answeredCalls: { $sum: { $cond: [{ $ne: ['$answeredAt', null] }, 1, 0] } },
+            missedCalls: { $sum: { $cond: [{ $eq: ['$status', 'missed'] }, 1, 0] } },
+            avgDuration: { $avg: '$duration' }
+          }
+        }
       ]),
     ]);
 
@@ -60,19 +74,19 @@ class AgentDashboardService {
     if (to) timeSeriesMatch.createdAt.$lte = new Date(to);
 
     const [assignedPerDay, resolvedPerDay] = await Promise.all([
-      Ticket.aggregate([
+      ticketRepo.aggregate([
         { $match: timeSeriesMatch },
         { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }, count: { $sum: 1 } } },
         { $sort: { _id: 1 } },
       ]),
-      Ticket.aggregate([
+      ticketRepo.aggregate([
         { $match: { ...timeSeriesMatch, resolvedAt: { $ne: null } } },
         { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$resolvedAt' } }, count: { $sum: 1 } } },
         { $sort: { _id: 1 } },
       ]),
     ]);
 
-    const channelDistribution = await Ticket.aggregate([
+    const channelDistribution = await ticketRepo.aggregate([
       { $match: baseMatch },
       { $group: { _id: '$channel', count: { $sum: 1 } } },
       { $sort: { count: -1 } },
@@ -80,7 +94,7 @@ class AgentDashboardService {
 
     const channelTotal = channelDistribution.reduce((sum, c) => sum + c.count, 0) || 1;
 
-    const profile = await User.findById(agentId).select('name email phone profileImage role lastLogin');
+    const profile = await userRepo.model.findById(agentId).select('name email phone profileImage role lastLogin');
 
     const feedbackAgg = await TicketFeedback.aggregate([
       { $match: { companyId: new mongoose.Types.ObjectId(companyId), agentId: new mongoose.Types.ObjectId(agentId) } },
@@ -124,17 +138,38 @@ class AgentDashboardService {
     const avgResSeconds = Math.floor((avgResolutionMs % 60000) / 1000);
     const formattedAvgDuration = `${avgResMinutes}:${avgResSeconds < 10 ? '0' : ''}${avgResSeconds}s`;
 
+    const callStatsData = callStatsAgg[0] || {
+      totalCalls: 0,
+      answeredCalls: 0,
+      missedCalls: 0,
+      avgDuration: 0,
+    };
+    
+    const callAvgDurationMs = Math.round(callStatsData.avgDuration || 0) * 1000;
+    const callAvgMinutes = Math.floor(callAvgDurationMs / 60000);
+    const callAvgSeconds = Math.floor((callAvgDurationMs % 60000) / 1000);
+    const avgCallDurationString = `${callAvgMinutes}:${callAvgSeconds < 10 ? '0' : ''}${callAvgSeconds}s`;
+
+    const callStats = {
+      totalCalls: callStatsData.totalCalls,
+      answeredCalls: callStatsData.answeredCalls,
+      missedCalls: callStatsData.missedCalls,
+      avgDurationString: avgCallDurationString,
+    };
+
+    const trackerTime = profile?.lastLogin ? Math.floor((Date.now() - new Date(profile.lastLogin).getTime()) / 1000) : 0;
+
     return {
       kpis: {
-        flaggedTicketsCount,
         runningTicketsCount,
         pendingTicketsCount,
         avgFirstResponseTime,
         avgResolutionTime,
       },
       uiKpis: {
-        flaggedTickets: flaggedTicketsCount,
+        assignedTickets: assignedTicketsCount,
         pendingTickets: pendingTicketsCount,
+        closedTickets: closedTicketsCount,
         avgLateReplySec: avgFirstResponseSec,
         avgLateReplyString: `${avgFirstResponseSec}s`,
         avgCallDurationString: formattedAvgDuration,
@@ -175,6 +210,8 @@ class AgentDashboardService {
         count: c.count,
         percentage: Math.round((c.count / channelTotal) * 100),
       })),
+      callStats,
+      trackerTime,
       profile,
     };
   }
@@ -188,15 +225,15 @@ class AgentDashboardService {
     const ticketMatch = { companyId: new mongoose.Types.ObjectId(companyId), assignedTo: { $ne: null } };
     if (hasDateFilter) ticketMatch.createdAt = dateFilter;
 
-    const agentStats = await Ticket.aggregate([
+    const agentStats = await ticketRepo.aggregate([
       { $match: ticketMatch },
       {
         $group: {
           _id: '$assignedTo',
           totalAssigned: { $sum: 1 },
-          openCount: { $sum: { $cond: [{ $eq: ['$status', TICKET_STATUS.OPEN] }, 1, 0] } },
-          inProgressCount: { $sum: { $cond: [{ $eq: ['$status', TICKET_STATUS.IN_PROGRESS] }, 1, 0] } },
-          resolvedCount: { $sum: { $cond: [{ $eq: ['$status', TICKET_STATUS.RESOLVED] }, 1, 0] } },
+          openCount: { $sum: { $cond: [{ $eq: ['$status', TICKET_STATUS.PENDING] }, 1, 0] } },
+          inProgressCount: { $sum: { $cond: [{ $eq: ['$status', TICKET_STATUS.OPENED] }, 1, 0] } },
+          resolvedCount: { $sum: { $cond: [{ $eq: ['$status', TICKET_STATUS.CLOSED] }, 1, 0] } },
           closedCount: { $sum: { $cond: [{ $eq: ['$status', TICKET_STATUS.CLOSED] }, 1, 0] } },
           avgFirstResponse: {
             $avg: {

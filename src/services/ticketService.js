@@ -1,3 +1,4 @@
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../repositories/index.js';
 import { Ticket, TicketFeedback, ChatSession } from '../models/index.js';
 import { logEvent } from './eventLogService.js';
 import qaService from './qaService.js';
@@ -23,8 +24,8 @@ class TicketService {
     if (assignedTo) query.assignedTo = assignedTo;
     if (userId) query.userId = userId;
 
-    const total = await Ticket.countDocuments(query);
-    const tickets = await Ticket.find(query)
+    const total = await ticketRepo.count(query);
+    const tickets = await ticketRepo.model.find(query)
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
@@ -43,7 +44,7 @@ class TicketService {
   }
 
   async getTicketById(companyId, ticketId) {
-    const ticket = await Ticket.findOne({ companyId, _id: ticketId })
+    const ticket = await ticketRepo.findOne({ companyId, _id: ticketId })
       .populate('userId', 'name email phone')
       .populate('assignedTo', 'name email')
       .populate('agentNotes.agentId', 'name email');
@@ -53,7 +54,7 @@ class TicketService {
   }
 
   async updateTicket(companyId, ticketId, updateData, agentId) {
-    const ticket = await Ticket.findOne({ companyId, _id: ticketId });
+    const ticket = await ticketRepo.findOne({ companyId, _id: ticketId });
     if (!ticket) throw ApiError.notFound('Ticket not found');
 
     const previousStatus = ticket.status;
@@ -63,7 +64,7 @@ class TicketService {
     if (updateData.category) ticket.category = updateData.category;
     if (updateData.assignedTo !== undefined) ticket.assignedTo = updateData.assignedTo;
 
-    if (updateData.status === TICKET_STATUS.RESOLVED && !ticket.resolvedAt) {
+    if (updateData.status === TICKET_STATUS.CLOSED && !ticket.resolvedAt) {
       ticket.resolvedAt = new Date();
     }
 
@@ -74,7 +75,7 @@ class TicketService {
     await ticket.save();
 
     const eventType =
-      updateData.status === TICKET_STATUS.RESOLVED
+      updateData.status === TICKET_STATUS.CLOSED
         ? EVENT_TYPES.TICKET_RESOLVED
         : EVENT_TYPES.TICKET_UPDATED;
 
@@ -92,7 +93,7 @@ class TicketService {
     });
 
     // Trigger automated QA analysis asynchronously when resolved
-    if (updateData.status === TICKET_STATUS.RESOLVED) {
+    if (updateData.status === TICKET_STATUS.CLOSED) {
       qaService.analyzeAndSaveByTicketId(companyId, ticketId).catch((err) => {
         console.error(`[QA Automation] Trigger failed for ticket ${ticket.ticketNumber}:`, err.message);
       });
@@ -111,7 +112,7 @@ class TicketService {
   }
 
   async addAgentNote(companyId, ticketId, agentId, content) {
-    const ticket = await Ticket.findOne({ companyId, _id: ticketId });
+    const ticket = await ticketRepo.findOne({ companyId, _id: ticketId });
     if (!ticket) throw ApiError.notFound('Ticket not found');
 
     ticket.agentNotes.push({
@@ -139,8 +140,8 @@ class TicketService {
 
   async getCustomerTickets(companyId, userId, { page = 1, limit = 20 } = {}) {
     const query = { companyId, userId };
-    const total = await Ticket.countDocuments(query);
-    const tickets = await Ticket.find(query)
+    const total = await ticketRepo.count(query);
+    const tickets = await ticketRepo.model.find(query)
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
@@ -158,10 +159,10 @@ class TicketService {
   }
 
   async submitFeedback(companyId, ticketId, userId, { rating, comment }) {
-    const ticket = await Ticket.findOne({ _id: ticketId, companyId, userId });
+    const ticket = await ticketRepo.findOne({ _id: ticketId, companyId, userId });
     if (!ticket) throw ApiError.notFound('Ticket not found or does not belong to you');
 
-    if (ticket.status !== TICKET_STATUS.RESOLVED && ticket.status !== TICKET_STATUS.CLOSED) {
+    if (ticket.status !== TICKET_STATUS.CLOSED && ticket.status !== TICKET_STATUS.CLOSED) {
       throw ApiError.badRequest('Feedback can only be submitted for resolved or closed tickets');
     }
 

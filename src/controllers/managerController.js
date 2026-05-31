@@ -1,3 +1,4 @@
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../repositories/index.js';
 import BaseController from './baseController.js';
 import { RBAC_MATRIX, ROLES } from '../constants/index.js';
 import { listAuditLogs } from '../services/auditLogService.js';

@@ -1,3 +1,4 @@
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../repositories/index.js';
 import { Company, User } from '../models/index.js';
 import slugify from 'slugify';
 import ApiError from '../utils/apiError.js';
@@ -11,7 +12,7 @@ class PlatformController extends BaseController {
 
     const companySlug = slug || slugify(name, { lower: true, strict: true });
 
-    const existing = await Company.findOne({ slug: companySlug });
+    const existing = await companyRepo.findOne({ slug: companySlug });
     if (existing) {
       throw ApiError.conflict('A company with this slug already exists');
     }
@@ -40,7 +41,7 @@ class PlatformController extends BaseController {
     }
 
     const total = await Company.countDocuments(filter);
-    const companies = await Company.find(filter)
+    const companies = await companyRepo.model.find(filter)
       .sort({ createdAt: -1 })
       .skip((parseInt(page) - 1) * parseInt(limit))
       .limit(parseInt(limit));
@@ -54,7 +55,7 @@ class PlatformController extends BaseController {
   });
 
   getCompany = this.catchAsync(async (req, res) => {
-    const company = await Company.findById(req.params.id);
+    const company = await companyRepo.model.findById(req.params.id);
     if (!company) throw ApiError.notFound('Company not found');
 
     const userCounts = await User.aggregate([
@@ -66,7 +67,7 @@ class PlatformController extends BaseController {
   });
 
   updateCompany = this.catchAsync(async (req, res) => {
-    const company = await Company.findById(req.params.id);
+    const company = await companyRepo.model.findById(req.params.id);
     if (!company) throw ApiError.notFound('Company not found');
 
     const allowed = ['name', 'industry', 'channelsConfig', 'settings', 'isActive'];
@@ -83,13 +84,13 @@ class PlatformController extends BaseController {
   createInitialAdmin = this.catchAsync(async (req, res) => {
     const { name, email, password } = req.body;
 
-    const company = await Company.findById(req.params.id);
+    const company = await companyRepo.model.findById(req.params.id);
     if (!company) throw ApiError.notFound('Company not found');
 
-    const existing = await User.findOne({ companyId: company._id, email });
+    const existing = await userRepo.findOne({ companyId: company._id, email });
     if (existing) throw ApiError.conflict('User with this email already exists');
 
-    const user = await User.create({
+    const user = await userRepo.create({
       companyId: company._id,
       name,
       email,
