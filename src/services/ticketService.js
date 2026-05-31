@@ -44,7 +44,7 @@ class TicketService {
   }
 
   async getTicketById(companyId, ticketId) {
-    const ticket = await ticketRepo.findOne({ companyId, _id: ticketId })
+    const ticket = await ticketRepo.model.findOne({ companyId, _id: ticketId })
       .populate('userId', 'name email phone')
       .populate('assignedTo', 'name email')
       .populate('agentNotes.agentId', 'name email');

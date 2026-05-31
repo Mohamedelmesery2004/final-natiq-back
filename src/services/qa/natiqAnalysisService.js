@@ -75,12 +75,21 @@ export const analyzeWithNatiq = async (ticket) => {
     }
   );
 
-  if (!response?.data || typeof response.data !== 'object') {
-    throw new Error('Natiq API returned malformed response.');
+  if (!response || response.data === undefined || response.data === null) {
+    throw new Error('Natiq API returned empty response.');
+  }
+
+  let analysisData = response.data;
+  if (typeof analysisData === 'string') {
+    try {
+      analysisData = JSON.parse(analysisData);
+    } catch {
+      // String but not JSON
+    }
   }
 
   return {
-    analysis: response.data,
+    analysis: analysisData,
     analyzedAt: new Date().toISOString(),
   };
 };
@@ -96,12 +105,22 @@ export const analyzeWithNatiqByTicketId = async (companyId, ticketId) => {
     }
   );
 
-  if (!response?.data || typeof response.data !== 'object') {
-    throw ApiError.internal('Natiq API returned malformed response.');
+  if (!response || response.data === undefined || response.data === null) {
+    console.error('[Natiq API] Malformed response:', response?.data);
+    throw ApiError.internal('Natiq API returned empty response.');
+  }
+
+  let analysisData = response.data;
+  if (typeof analysisData === 'string') {
+    try {
+      analysisData = JSON.parse(analysisData);
+    } catch {
+      // It's a string but not JSON, that's fine, we'll use it as is.
+    }
   }
 
   return {
-    analysis: response.data,
+    analysis: analysisData,
     analyzedAt: new Date().toISOString(),
   };
 };
