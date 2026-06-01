@@ -50,6 +50,27 @@ class TeamLeaderController extends BaseController {
     this.sendSuccess(res, { agent }, 'Agent profile retrieved successfully');
   });
 
+  // Notify an agent
+  notifyAgent = this.catchAsync(async (req, res) => {
+    const { agentId } = req.params;
+    const { message } = req.body;
+    if (!message || typeof message !== 'string' || !message.trim()) {
+      throw ApiError.badRequest('message is required');
+    }
+    const access = await teamLeaderService.getAccessContext(
+      req.companyId,
+      req.userRole,
+      req.userId
+    );
+    const result = await teamLeaderService.notifyAgent(
+      req.companyId,
+      agentId,
+      message.trim(),
+      access
+    );
+    this.sendSuccess(res, result, 'Notification sent successfully');
+  });
+
   getAgentPerformance = this.catchAsync(async (req, res) => {
     const { agentId } = req.params;
     const { period } = req.query;

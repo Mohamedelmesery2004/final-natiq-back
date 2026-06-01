@@ -3,6 +3,8 @@ import { User, Ticket, ChatSession, QAAnalysis, Call } from '../models/index.js'
 import { ROLES, TICKET_STATUS } from '../constants/index.js';
 import ApiError from '../utils/apiError.js';
 import { getIO } from '../sockets/index.js';
+import { notificationRepo } from '../repositories/index.js';
+import AgentDashboardService from './agent/agentDashboardService.js';
 import mongoose from 'mongoose';
 
 class TeamLeaderService {
@@ -98,10 +100,10 @@ class TeamLeaderService {
       }),
       teamIds.length
         ? ticketRepo.count({
-            companyId,
-            assignedTo: { $in: teamIds },
-            status: { $in: [TICKET_STATUS.PENDING, TICKET_STATUS.OPENED] },
-          })
+          companyId,
+          assignedTo: { $in: teamIds },
+          status: { $in: [TICKET_STATUS.PENDING, TICKET_STATUS.OPENED] },
+        })
         : 0,
       ticketRepo.count({
         companyId,
@@ -110,11 +112,11 @@ class TeamLeaderService {
       }),
       teamIds.length
         ? ticketRepo.count({
-            companyId,
-            assignedTo: { $in: teamIds },
-            status: TICKET_STATUS.CLOSED,
-            resolvedAt: { $gte: today },
-          })
+          companyId,
+          assignedTo: { $in: teamIds },
+          status: TICKET_STATUS.CLOSED,
+          resolvedAt: { $gte: today },
+        })
         : 0,
     ]);
 
@@ -129,7 +131,7 @@ class TeamLeaderService {
   async getAgentProfile(companyId, agentId, access) {
     this._mustAccessAgent(access, agentId);
 
-    const agent = await userRepo.findOne({
+    const agent = await userRepo.model.findOne({
       _id: agentId,
       companyId,
       role: ROLES.AGENT,
@@ -138,8 +140,43 @@ class TeamLeaderService {
       .lean();
 
     if (!agent) throw ApiError.notFound('Agent not found');
+
+    try {
+      const dashboard = await AgentDashboardService.getAgentDashboard(companyId, agentId);
+      // Merge required metrics into the agent object
+      if (dashboard) {
+        agent.assignedTickets = dashboard.uiKpis?.assignedTickets;
+        agent.pendingTickets = dashboard.uiKpis?.pendingTickets;
+        agent.closedTickets = dashboard.uiKpis?.closedTickets;
+        agent.avgFirstResponseTime = dashboard.kpis?.avgFirstResponseTime;
+        agent.avgResolutionTime = dashboard.kpis?.avgResolutionTime;
+        agent.avgFeedback = dashboard.uiKpis?.avgFeedback;
+        agent.csatScore = dashboard.uiKpis?.csatScore;
+        agent.trackerTime = dashboard.trackerTime;
+      }
+    } catch (err) {
+      console.error('Failed to load agent dashboard metrics:', err.message);
+      // Continue without merged metrics
+    }
+
     return agent;
   }
+
+  // Notify an agent via Socket.IO
+  async notifyAgent(companyId, agentId, message, access) {
+    this._mustAccessAgent(access, agentId);
+    // Store notification in DB for the agent
+    await notificationRepo.create({
+      companyId,
+      userId: agentId,
+      title: 'Team Leader Notification',
+      message: message,
+      isRead: false,
+      createdAt: new Date(),
+    });
+    return { sent: true };
+  }
+
 
   async getTeamAgents(companyId, access) {
     let agentQuery = { companyId, role: ROLES.AGENT, isActive: true };
@@ -155,20 +192,20 @@ class TeamLeaderService {
 
     const activeTicketsCount = agentIds.length
       ? await ticketRepo.aggregate([
-          {
-            $match: {
-              companyId: new mongoose.Types.ObjectId(companyId),
-              assignedTo: { $in: agentIds },
-              status: { $in: [TICKET_STATUS.PENDING, TICKET_STATUS.OPENED] },
-            },
+        {
+          $match: {
+            companyId: new mongoose.Types.ObjectId(companyId),
+            assignedTo: { $in: agentIds },
+            status: { $in: [TICKET_STATUS.PENDING, TICKET_STATUS.OPENED] },
           },
-          {
-            $group: {
-              _id: '$assignedTo',
-              count: { $sum: 1 },
-            },
+        },
+        {
+          $group: {
+            _id: '$assignedTo',
+            count: { $sum: 1 },
           },
-        ])
+        },
+      ])
       : [];
 
     const countMap = {};

@@ -13,6 +13,7 @@ router.get('/dashboard', teamLeaderController.getDashboard);
 router.get('/agents', teamLeaderController.getAgents);
 router.get('/agents/:agentId/performance', teamLeaderController.getAgentPerformance);
 router.get('/agents/:agentId/profile', teamLeaderController.getAgentProfile);
+router.post('/agents/:agentId/notify', teamLeaderController.notifyAgent);
 
 router.post('/tickets/assign', teamLeaderController.assignTickets);
 router.get('/tickets/queue/unassigned', teamLeaderController.getUnassignedQueue);
