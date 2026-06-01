@@ -1,4 +1,4 @@
-import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../repositories/index.js';
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo, ticketFeedbackRepo } from '../repositories/index.js';
 import { User, Ticket, ChatSession, QAAnalysis, Call } from '../models/index.js';
 import { ROLES, TICKET_STATUS } from '../constants/index.js';
 import ApiError from '../utils/apiError.js';
@@ -51,80 +51,198 @@ class TeamLeaderService {
   async getDashboardOverview(companyId, access) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const companyObjId = new mongoose.Types.ObjectId(companyId);
 
-    if (!this._isTeamLeader(access?.role)) {
-      const [
-        totalAgents,
-        activeTickets,
-        unassignedTickets,
-        resolvedToday,
-      ] = await Promise.all([
-        userRepo.count({ companyId, role: ROLES.AGENT, isActive: true }),
-        ticketRepo.count({
-          companyId,
-          status: { $in: [TICKET_STATUS.PENDING, TICKET_STATUS.OPENED] },
-        }),
-        ticketRepo.count({
-          companyId,
-          status: TICKET_STATUS.PENDING,
-          assignedTo: null,
-        }),
-        ticketRepo.count({
-          companyId,
-          status: TICKET_STATUS.CLOSED,
-          resolvedAt: { $gte: today },
-        }),
-      ]);
+    const isTeamLeader = this._isTeamLeader(access?.role);
+    const teamIds = isTeamLeader ? (access.teamAgentIds || []) : null;
+    const hasTeam = teamIds && teamIds.length > 0;
+    const skipData = isTeamLeader && !hasTeam;
 
-      return {
-        totalAgents,
-        activeTickets,
-        unassignedTickets,
-        resolvedToday,
-      };
-    }
+    const agentFilter = isTeamLeader
+      ? { companyId, role: ROLES.AGENT, teamLeaderId: access.userId, isActive: true }
+      : { companyId, role: ROLES.AGENT, isActive: true };
 
-    const teamIds = access.teamAgentIds || [];
+    const ticketBase = isTeamLeader && hasTeam
+      ? { companyId: companyObjId, assignedTo: { $in: teamIds } }
+      : { companyId: companyObjId };
+
+    const ticketBaseWithAssignee = isTeamLeader && hasTeam
+      ? { companyId: companyObjId, assignedTo: { $in: teamIds } }
+      : { companyId: companyObjId, assignedTo: { $ne: null } };
+
+    const callFeedbackMatch = isTeamLeader && hasTeam
+      ? { companyId: companyObjId, agentId: { $in: teamIds } }
+      : { companyId: companyObjId };
 
     const [
       totalAgents,
       activeTickets,
       unassignedTickets,
       resolvedToday,
+      totalResolved,
+      avgFirstResponseAgg,
+      callStatsAgg,
+      channelDistAgg,
+      feedbackAgg,
+      assignedTrendAgg,
+      resolvedTrendAgg,
     ] = await Promise.all([
-      userRepo.count({
-        companyId,
-        role: ROLES.AGENT,
-        teamLeaderId: access.userId,
-        isActive: true,
-      }),
-      teamIds.length
-        ? ticketRepo.count({
-          companyId,
-          assignedTo: { $in: teamIds },
-          status: { $in: [TICKET_STATUS.PENDING, TICKET_STATUS.OPENED] },
-        })
-        : 0,
+      userRepo.count(agentFilter),
+
+      skipData
+        ? 0
+        : ticketRepo.count({
+            ...ticketBase,
+            status: { $in: [TICKET_STATUS.PENDING, TICKET_STATUS.OPENED] },
+          }),
+
       ticketRepo.count({
         companyId,
         status: TICKET_STATUS.PENDING,
         assignedTo: null,
       }),
-      teamIds.length
-        ? ticketRepo.count({
-          companyId,
-          assignedTo: { $in: teamIds },
-          status: TICKET_STATUS.CLOSED,
-          resolvedAt: { $gte: today },
-        })
-        : 0,
+
+      skipData
+        ? 0
+        : ticketRepo.count({
+            ...ticketBase,
+            status: TICKET_STATUS.CLOSED,
+            resolvedAt: { $gte: today },
+          }),
+
+      skipData
+        ? 0
+        : ticketRepo.count({
+            ...ticketBase,
+            status: TICKET_STATUS.CLOSED,
+          }),
+
+      skipData
+        ? []
+        : ticketRepo.aggregate([
+            { $match: { ...ticketBaseWithAssignee, firstResponseAt: { $ne: null } } },
+            { $project: { responseTime: { $subtract: ['$firstResponseAt', '$createdAt'] } } },
+            { $group: { _id: null, avgTime: { $avg: '$responseTime' } } },
+          ]),
+
+      skipData
+        ? []
+        : callRepo.aggregate([
+            { $match: callFeedbackMatch },
+            {
+              $group: {
+                _id: null,
+                totalCalls: { $sum: 1 },
+                answeredCalls: { $sum: { $cond: [{ $ne: ['$answeredAt', null] }, 1, 0] } },
+                missedCalls: { $sum: { $cond: [{ $eq: ['$status', 'missed'] }, 1, 0] } },
+                avgDuration: { $avg: '$duration' },
+              },
+            },
+          ]),
+
+      skipData
+        ? []
+        : ticketRepo.aggregate([
+            { $match: ticketBase },
+            { $group: { _id: '$channel', count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+          ]),
+
+      skipData
+        ? []
+        : ticketFeedbackRepo.aggregate([
+            { $match: callFeedbackMatch },
+            {
+              $group: {
+                _id: null,
+                totalRatings: { $sum: 1 },
+                avgRating: { $avg: '$rating' },
+                satisfiedCount: { $sum: { $cond: [{ $gte: ['$rating', 4] }, 1, 0] } },
+              },
+            },
+          ]),
+
+      skipData
+        ? []
+        : ticketRepo.aggregate([
+            { $match: { ...ticketBase, createdAt: { $gte: thirtyDaysAgo } } },
+            { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }, assigned: { $sum: 1 } } },
+            { $sort: { _id: 1 } },
+          ]),
+
+      skipData
+        ? []
+        : ticketRepo.aggregate([
+            { $match: { ...ticketBase, resolvedAt: { $gte: thirtyDaysAgo } } },
+            { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$resolvedAt' } }, count: { $sum: 1 } } },
+            { $sort: { _id: 1 } },
+          ]),
     ]);
 
+    const avgFirstResponseTime = avgFirstResponseAgg[0]
+      ? Math.round(avgFirstResponseAgg[0].avgTime / 60000)
+      : 0;
+
+    const channelTotal = channelDistAgg.reduce((sum, c) => sum + c.count, 0) || 1;
+    const channelDistribution = channelDistAgg.map((c) => ({
+      name: c._id ? c._id.charAt(0).toUpperCase() + c._id.slice(1) : 'Unknown',
+      count: c.count,
+      percent: Math.round((c.count / channelTotal) * 100),
+    }));
+
+    const feedbackData = feedbackAgg[0] || { totalRatings: 0, avgRating: 0, satisfiedCount: 0 };
+    const avgFeedback = Math.round(feedbackData.avgRating * 10) / 10;
+    const csatScore = feedbackData.totalRatings > 0
+      ? Math.round((feedbackData.satisfiedCount / feedbackData.totalRatings) * 100)
+      : 0;
+
+    const goalTarget = 500;
+    const goalPercentage = totalResolved > 0
+      ? Math.min(100, Math.round((totalResolved / goalTarget) * 100))
+      : 0;
+
+    const callStatsData = callStatsAgg[0] || { totalCalls: 0, answeredCalls: 0, missedCalls: 0, avgDuration: 0 };
+    const callAvgDurationMs = Math.round(callStatsData.avgDuration || 0) * 1000;
+    const callAvgMinutes = Math.floor(callAvgDurationMs / 60000);
+    const callAvgSeconds = Math.floor((callAvgDurationMs % 60000) / 1000);
+    const avgCallDurationString = `${callAvgMinutes}:${callAvgSeconds < 10 ? '0' : ''}${callAvgSeconds}s`;
+
+    const trendMap = {};
+    assignedTrendAgg.forEach((d) => { trendMap[d._id] = { assigned: d.assigned, resolved: 0 }; });
+    resolvedTrendAgg.forEach((d) => {
+      if (trendMap[d._id]) trendMap[d._id].resolved = d.count;
+      else trendMap[d._id] = { assigned: 0, resolved: d.count };
+    });
+    const trendData = Object.entries(trendMap)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, val]) => ({ _id: date, assigned: val.assigned, resolved: val.resolved }));
+
     return {
-      totalAgents,
-      activeTickets,
-      unassignedTickets,
-      resolvedToday,
+      dashboard: {
+        totalAgents,
+        activeTickets,
+        unassignedTickets,
+        resolvedToday,
+        kpis: {
+          avgFirstResponseTime,
+        },
+        uiKpis: {
+          csatScore,
+          avgFeedback,
+          goalTickets: {
+            total: goalTarget,
+            current: totalResolved,
+            percentageCompleted: goalPercentage,
+          },
+          answeredCalls: callStatsData.answeredCalls,
+          totalCalls: callStatsData.totalCalls,
+          missedCalls: callStatsData.missedCalls,
+          avgCallDurationString,
+        },
+        channelDistribution,
+        trendData,
+      },
     };
   }
 
