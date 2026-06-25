@@ -37,6 +37,7 @@ router.get('/analytics/tickets', validate(agentValidator.analyticsQuery), agentC
 router.get('/analytics/time-series', validate(agentValidator.analyticsQuery), agentController.getTimeSeries);
 router.get('/analytics/quality', agentController.getQualityMetrics);
 router.get('/analytics/insights', agentController.getInsights);
+router.get('/analytics/full', validate(agentValidator.analyticsQuery), agentController.getFullAnalytics);
 
 // Tasks
 router.get('/tasks', taskController.getTasks);

@@ -348,6 +348,11 @@ class AgentController extends BaseController {
     this.sendSuccess(res, { analytics: data });
   });
 
+  getFullAnalytics = this.catchAsync(async (req, res) => {
+    const data = await agentAnalyticsService.getFullAnalytics(req.companyId, req.userId, req.query);
+    this.sendSuccess(res, { analytics: data });
+  });
+
 }
 
 export default new AgentController();
