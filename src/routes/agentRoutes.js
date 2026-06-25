@@ -31,6 +31,13 @@ router.post('/tickets/:ticketId/close', validate(agentValidator.ticketIdParam), 
 
 router.get('/chat-history/:sessionId', validate(agentValidator.sessionIdParam), agentController.getChatHistory);
 
+// Analytics
+router.get('/analytics/overview', validate(agentValidator.analyticsQuery), agentController.getAnalyticsOverview);
+router.get('/analytics/tickets', validate(agentValidator.analyticsQuery), agentController.getTicketAnalytics);
+router.get('/analytics/time-series', validate(agentValidator.analyticsQuery), agentController.getTimeSeries);
+router.get('/analytics/quality', agentController.getQualityMetrics);
+router.get('/analytics/insights', agentController.getInsights);
+
 // Tasks
 router.get('/tasks', taskController.getTasks);
 router.post('/tasks', taskController.createTask);

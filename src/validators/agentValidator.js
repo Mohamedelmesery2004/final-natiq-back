@@ -1,5 +1,5 @@
 import Joi from 'joi';
-import { TICKET_STATUS, TICKET_PRIORITY, TICKET_CATEGORY } from '../constants/index.js';
+import { TICKET_STATUS, TICKET_PRIORITY, TICKET_CATEGORY, CHANNELS } from '../constants/index.js';
 
 const agentLogin = {
   body: Joi.object({
@@ -71,4 +71,12 @@ const sessionIdParam = {
   }).options({ stripUnknown: true, abortEarly: false }),
 };
 
-export { agentLogin, updateProfile, listAgentTickets, ticketIdParam, agentReply, dashboardOverview, sessionIdParam };
+const analyticsQuery = {
+  query: Joi.object({
+    from: Joi.date().iso(),
+    to: Joi.date().iso(),
+    channel: Joi.string().valid(...Object.values(CHANNELS)),
+  }).options({ stripUnknown: true, abortEarly: false }),
+};
+
+export { agentLogin, updateProfile, listAgentTickets, ticketIdParam, agentReply, dashboardOverview, sessionIdParam, analyticsQuery };

@@ -4,6 +4,7 @@ import path from 'path';
 import agentDashboardService from '../services/agent/agentDashboardService.js';
 import agentProfileService from '../services/agent/agentProfileService.js';
 import agentTicketService from '../services/agent/agentTicketService.js';
+import agentAnalyticsService from '../services/agent/agentAnalyticsService.js';
 import { User, Company, ChatSession } from '../models/index.js';
 import { generateToken } from '../middlewares/authMiddleware.js';
 import { ROLES, CHANNELS } from '../constants/index.js';
@@ -320,6 +321,31 @@ class AgentController extends BaseController {
       req.query
     );
     this.sendSuccess(res, history);
+  });
+
+  getAnalyticsOverview = this.catchAsync(async (req, res) => {
+    const data = await agentAnalyticsService.getOverview(req.companyId, req.userId, req.query);
+    this.sendSuccess(res, { analytics: data });
+  });
+
+  getTicketAnalytics = this.catchAsync(async (req, res) => {
+    const data = await agentAnalyticsService.getTicketAnalytics(req.companyId, req.userId, req.query);
+    this.sendSuccess(res, { analytics: data });
+  });
+
+  getTimeSeries = this.catchAsync(async (req, res) => {
+    const data = await agentAnalyticsService.getTimeSeries(req.companyId, req.userId, req.query);
+    this.sendSuccess(res, { analytics: data });
+  });
+
+  getQualityMetrics = this.catchAsync(async (req, res) => {
+    const data = await agentAnalyticsService.getQualityMetrics(req.companyId, req.userId);
+    this.sendSuccess(res, { analytics: data });
+  });
+
+  getInsights = this.catchAsync(async (req, res) => {
+    const data = await agentAnalyticsService.getInsights(req.companyId, req.userId);
+    this.sendSuccess(res, { analytics: data });
   });
 
 }
