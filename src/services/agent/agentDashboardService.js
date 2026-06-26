@@ -242,48 +242,59 @@ class AgentDashboardService {
     };
   }
 
-  // ─── MODULE 5: Tickets Over Time ───────────────
+  // ─── MODULE 5: Performance Trend (full time series) ──
 
-  async _computeTicketsOverTime(companyId, agentId, dateFilter) {
+  async _computePerformanceTrend(companyId, agentId, dateFilter) {
     const companyObjId = this._toObjectId(companyId);
     const agentObjId = this._toObjectId(agentId);
     const hasFilter = Object.keys(dateFilter).length > 0;
 
-    const assignedMatch = { companyId: companyObjId, assignedTo: agentObjId };
-    if (hasFilter) assignedMatch.createdAt = dateFilter;
+    let startDate, endDate;
+    if (hasFilter && dateFilter.$gte) {
+      startDate = new Date(dateFilter.$gte);
+    } else {
+      endDate = new Date();
+      startDate = new Date(endDate.getTime() - DEFAULT_RANGE_DAYS * 24 * 60 * 60 * 1000);
+    }
+    if (hasFilter && dateFilter.$lte) {
+      endDate = new Date(dateFilter.$lte);
+    } else if (!endDate) {
+      endDate = new Date();
+    }
 
-    const resolvedMatch = { companyId: companyObjId, assignedTo: agentObjId, status: TICKET_STATUS.CLOSED, resolvedAt: { $ne: null } };
-    if (hasFilter) resolvedMatch.resolvedAt = { ...dateFilter };
+    startDate.setUTCHours(0, 0, 0, 0);
+    endDate.setUTCHours(23, 59, 59, 999);
+
+    const fullRange = [];
+    const cursor = new Date(startDate);
+    while (cursor <= endDate) {
+      fullRange.push(cursor.toISOString().slice(0, 10));
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+
+    const rangeFilter = { $gte: startDate, $lte: endDate };
 
     const [assignedPerDay, resolvedPerDay] = await Promise.all([
       ticketRepo.aggregate([
-        { $match: assignedMatch },
+        { $match: { companyId: companyObjId, assignedTo: agentObjId, createdAt: rangeFilter } },
         { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }, count: { $sum: 1 } } },
-        { $sort: { _id: 1 } },
       ]),
       ticketRepo.aggregate([
-        { $match: resolvedMatch },
+        { $match: { companyId: companyObjId, assignedTo: agentObjId, status: TICKET_STATUS.CLOSED, resolvedAt: { $ne: null, ...rangeFilter } } },
         { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$resolvedAt' } }, count: { $sum: 1 } } },
-        { $sort: { _id: 1 } },
       ]),
     ]);
 
-    // ── Merge using string keys only — no Date objects, no timezone bugs ──
-    const dateMap = {};
-    assignedPerDay.forEach((d) => { dateMap[d._id] = { assigned: d.count, resolved: 0 }; });
-    resolvedPerDay.forEach((d) => {
-      if (dateMap[d._id]) dateMap[d._id].resolved = d.count;
-      else dateMap[d._id] = { assigned: 0, resolved: d.count };
-    });
+    const assignedMap = {};
+    assignedPerDay.forEach(d => { assignedMap[d._id] = d.count; });
+    const resolvedMap = {};
+    resolvedPerDay.forEach(d => { resolvedMap[d._id] = d.count; });
 
-    // Return only dates that have actual activity — no gap-filling, no zero rows
-    return Object.keys(dateMap)
-      .sort()
-      .map((date) => ({
-        date,
-        assigned: dateMap[date].assigned,
-        resolved: dateMap[date].resolved,
-      }));
+    return fullRange.map(date => ({
+      date,
+      assigned: assignedMap[date] || 0,
+      resolved: resolvedMap[date] || 0,
+    }));
   }
 
   // ─── MODULE 6: Channel Distribution ────────────
@@ -468,6 +479,79 @@ class AgentDashboardService {
     return { total, current: resolvedCount, percentage, dailyTarget };
   }
 
+  // ─── MODULE 11: Call Performance ──────────────
+
+  async _computeCallPerformance(companyId, agentId, dateFilter) {
+    const companyObjId = this._toObjectId(companyId);
+    const agentObjId = this._toObjectId(agentId);
+    const hasFilter = Object.keys(dateFilter).length > 0;
+
+    const match = { companyId: companyObjId, agentId: agentObjId };
+    if (hasFilter) match.startedAt = dateFilter;
+
+    const [callAgg] = await Promise.all([
+      callRepo.aggregate([
+        { $match: match },
+        {
+          $group: {
+            _id: null,
+            totalCalls: { $sum: 1 },
+            answered: {
+              $sum: { $cond: [{ $in: ['$status', ['active', 'ended']] }, 1, 0] },
+            },
+            missed: {
+              $sum: { $cond: [{ $eq: ['$status', 'missed'] }, 1, 0] },
+            },
+            totalDuration: { $sum: '$duration' },
+          },
+        },
+      ]),
+    ]);
+
+    const r = callAgg[0] || { totalCalls: 0, answered: 0, missed: 0, totalDuration: 0 };
+    const avgDuration = r.totalCalls > 0 ? Math.round(r.totalDuration / r.totalCalls) : 0;
+    const answerRate = r.totalCalls > 0 ? Math.round((r.answered / r.totalCalls) * 100) : 0;
+
+    return {
+      totalCalls: r.totalCalls,
+      answered: r.answered,
+      missed: r.missed,
+      avgDuration,
+      answerRate,
+    };
+  }
+
+  // ─── MODULE 12: CSAT UI (derived from feedbackStats) ──
+
+  _computeCsatUI(feedbackStats) {
+    const percentage = feedbackStats.csat || 0;
+    let label, color;
+    if (percentage >= 75) {
+      label = 'Good';
+      color = 'green';
+    } else if (percentage >= 50) {
+      label = 'Average';
+      color = 'orange';
+    } else {
+      label = 'Bad';
+      color = 'red';
+    }
+    return { percentage, label, color, trend: 0 };
+  }
+
+  // ─── MODULE 13: Workload (utilization) ────────
+
+  _computeWorkload(kpis, goalProgress) {
+    const used = kpis.assignedTickets || 0;
+    const total = goalProgress.total || 1;
+    const percentage = total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0;
+    let level;
+    if (percentage >= 70) level = 'high';
+    else if (percentage >= 40) level = 'medium';
+    else level = 'low';
+    return { used, total, percentage, level };
+  }
+
   // ══════════════════════════════════════════════
   // PUBLIC API
   // ══════════════════════════════════════════════
@@ -475,30 +559,37 @@ class AgentDashboardService {
   async getAgentDashboard(companyId, agentId, { from, to } = {}) {
     const dateFilter = this._buildDateFilter({ from, to });
 
-    const [kpis, todayStats, slaStats, productivity, ticketsOverTime, channelDistribution, feedbackStats, recentActivity, topCategories, goalProgress] = await Promise.all([
+    const [kpis, todayStats, slaStats, productivity, performanceTrend, channelDistribution, feedbackStats, recentActivity, topCategories, goalProgress, callPerformance] = await Promise.all([
       this._computeKPIs(companyId, agentId, dateFilter),
       this._computeTodayStats(companyId, agentId),
       this._computeSLAStats(companyId, agentId),
       this._computeProductivity(companyId, agentId, dateFilter),
-      this._computeTicketsOverTime(companyId, agentId, dateFilter),
+      this._computePerformanceTrend(companyId, agentId, dateFilter),
       this._computeChannelDistribution(companyId, agentId, dateFilter),
       this._computeFeedbackStats(companyId, agentId),
       this._computeRecentActivity(companyId, agentId),
       this._computeTopCategories(companyId, agentId, dateFilter),
       this._computeGoalProgress(companyId, agentId, dateFilter),
+      this._computeCallPerformance(companyId, agentId, dateFilter),
     ]);
+
+    const csatUI = this._computeCsatUI(feedbackStats);
+    const workload = this._computeWorkload(kpis, goalProgress);
 
     return {
       kpis,
       todayStats,
       slaStats,
       productivity,
-      ticketsOverTime,
+      performanceTrend,
+      callPerformance,
       channelDistribution,
       feedbackStats,
+      csatUI,
       recentActivity,
       topCategories,
       goalProgress,
+      workload,
     };
   }
 
