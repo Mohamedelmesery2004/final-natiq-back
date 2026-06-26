@@ -49,10 +49,14 @@ class TeamLeaderService {
   }
 
   async getDashboardOverview(companyId, access) {
-    const today = new Date();
+    const now = new Date();
+    const today = new Date(now);
     today.setHours(0, 0, 0, 0);
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const slaDeadline = new Date(now.getTime() - 240 * 60 * 1000);
     const companyObjId = new mongoose.Types.ObjectId(companyId);
+    const SLA_TARGET_MS = 240 * 60 * 1000;
+    const CAPACITY_PER_AGENT = 20;
 
     const isTeamLeader = this._isTeamLeader(access?.role);
     const teamIds = isTeamLeader ? (access.teamAgentIds || []) : null;
@@ -67,181 +71,589 @@ class TeamLeaderService {
       ? { companyId: companyObjId, assignedTo: { $in: teamIds } }
       : { companyId: companyObjId };
 
-    const ticketBaseWithAssignee = isTeamLeader && hasTeam
+    const ticketAssigned = isTeamLeader && hasTeam
       ? { companyId: companyObjId, assignedTo: { $in: teamIds } }
       : { companyId: companyObjId, assignedTo: { $ne: null } };
 
-    const callFeedbackMatch = isTeamLeader && hasTeam
+    const agentIdFilter = isTeamLeader && hasTeam
+      ? { $in: teamIds }
+      : { $ne: null };
+
+    const feedbackMatch = isTeamLeader && hasTeam
       ? { companyId: companyObjId, agentId: { $in: teamIds } }
       : { companyId: companyObjId };
 
+    const SLA_4H_AGO = new Date(now.getTime() - SLA_TARGET_MS);
+
     const [
       totalAgents,
+      agentsList,
       activeTickets,
       unassignedTickets,
       resolvedToday,
       totalResolved,
-      avgFirstResponseAgg,
+      avgResponseResolutionAgg,
       callStatsAgg,
       channelDistAgg,
       feedbackAgg,
+      agentTicketAgg,
+      agentFeedbackAgg,
+      slaBreachedAgg,
       assignedTrendAgg,
       resolvedTrendAgg,
+      heatmapAgg,
     ] = await Promise.all([
+      // ── 1. agent count ──
       userRepo.count(agentFilter),
 
-      skipData
-        ? 0
-        : ticketRepo.count({
-            ...ticketBase,
-            status: { $in: [TICKET_STATUS.PENDING, TICKET_STATUS.OPENED] },
-          }),
+      // ── 2. agent list (for names/status) ──
+      skipData ? [] : userRepo.model.find(agentFilter).select('_id name email lastLogin').lean(),
 
-      ticketRepo.count({
-        companyId,
-        status: TICKET_STATUS.PENDING,
-        assignedTo: null,
-      }),
+      // ── 3. active tickets (pending + opened) ──
+      skipData ? 0 : ticketRepo.count({ ...ticketBase, status: { $in: [TICKET_STATUS.PENDING, TICKET_STATUS.OPENED] } }),
 
-      skipData
-        ? 0
-        : ticketRepo.count({
-            ...ticketBase,
-            status: TICKET_STATUS.CLOSED,
-            resolvedAt: { $gte: today },
-          }),
+      // ── 4. unassigned tickets ──
+      ticketRepo.count({ companyId, status: TICKET_STATUS.PENDING, assignedTo: null }),
 
-      skipData
-        ? 0
-        : ticketRepo.count({
-            ...ticketBase,
-            status: TICKET_STATUS.CLOSED,
-          }),
+      // ── 5. resolved today ──
+      skipData ? 0 : ticketRepo.count({ ...ticketBase, status: TICKET_STATUS.CLOSED, resolvedAt: { $gte: today } }),
 
-      skipData
-        ? []
-        : ticketRepo.aggregate([
-            { $match: { ...ticketBaseWithAssignee, firstResponseAt: { $ne: null } } },
-            { $project: { responseTime: { $subtract: ['$firstResponseAt', '$createdAt'] } } },
-            { $group: { _id: null, avgTime: { $avg: '$responseTime' } } },
-          ]),
+      // ── 6. total resolved (for goals) ──
+      skipData ? 0 : ticketRepo.count({ ...ticketBase, status: TICKET_STATUS.CLOSED }),
 
-      skipData
-        ? []
-        : callRepo.aggregate([
-            { $match: callFeedbackMatch },
-            {
-              $group: {
-                _id: null,
-                totalCalls: { $sum: 1 },
-                answeredCalls: { $sum: { $cond: [{ $ne: ['$answeredAt', null] }, 1, 0] } },
-                missedCalls: { $sum: { $cond: [{ $eq: ['$status', 'missed'] }, 1, 0] } },
-                avgDuration: { $avg: '$duration' },
+      // ── 7. avg response + resolution times ──
+      skipData ? [] : ticketRepo.aggregate([
+        { $match: { ...ticketAssigned, firstResponseAt: { $ne: null } } },
+        {
+          $group: {
+            _id: null,
+            avgResponseTime: { $avg: { $subtract: ['$firstResponseAt', '$createdAt'] } },
+            avgResolutionTime: {
+              $avg: {
+                $cond: [
+                  { $ne: ['$resolvedAt', null] },
+                  { $subtract: ['$resolvedAt', '$createdAt'] },
+                  null,
+                ],
               },
             },
-          ]),
+          },
+        },
+      ]),
 
-      skipData
-        ? []
-        : ticketRepo.aggregate([
-            { $match: ticketBase },
-            { $group: { _id: '$channel', count: { $sum: 1 } } },
-            { $sort: { count: -1 } },
-          ]),
+      // ── 8. call stats ──
+      skipData ? [] : callRepo.aggregate([
+        { $match: feedbackMatch },
+        {
+          $group: {
+            _id: null,
+            totalCalls: { $sum: 1 },
+            answered: { $sum: { $cond: [{ $in: ['$status', ['active', 'ended']] }, 1, 0] } },
+            missed: { $sum: { $cond: [{ $eq: ['$status', 'missed'] }, 1, 0] } },
+            avgDuration: { $avg: '$duration' },
+            totalDuration: { $sum: '$duration' },
+          },
+        },
+      ]),
 
-      skipData
-        ? []
-        : ticketFeedbackRepo.aggregate([
-            { $match: callFeedbackMatch },
-            {
-              $group: {
-                _id: null,
-                totalRatings: { $sum: 1 },
-                avgRating: { $avg: '$rating' },
-                satisfiedCount: { $sum: { $cond: [{ $gte: ['$rating', 4] }, 1, 0] } },
+      // ── 9. channel distribution ──
+      skipData ? [] : ticketRepo.aggregate([
+        { $match: ticketBase },
+        { $group: { _id: '$channel', count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]),
+
+      // ── 10. overall feedback / CSAT ──
+      skipData ? [] : ticketFeedbackRepo.aggregate([
+        { $match: feedbackMatch },
+        {
+          $group: {
+            _id: null,
+            totalRatings: { $sum: 1 },
+            avgRating: { $avg: '$rating' },
+            satisfiedCount: { $sum: { $cond: [{ $gte: ['$rating', 4] }, 1, 0] } },
+          },
+        },
+      ]),
+
+      // ── 11. per-agent ticket stats ──
+      skipData ? [] : ticketRepo.aggregate([
+        { $match: { companyId: companyObjId, assignedTo: { $ne: null } } },
+        {
+          $group: {
+            _id: '$assignedTo',
+            activeTickets: {
+              $sum: { $cond: [{ $in: ['$status', [TICKET_STATUS.PENDING, TICKET_STATUS.OPENED]] }, 1, 0] },
+            },
+            resolvedTickets: { $sum: { $cond: [{ $eq: ['$status', TICKET_STATUS.CLOSED] }, 1, 0] } },
+            avgResponseTime: {
+              $avg: {
+                $cond: [
+                  { $ne: ['$firstResponseAt', null] },
+                  { $subtract: ['$firstResponseAt', '$createdAt'] },
+                  null,
+                ],
               },
             },
-          ]),
+            avgResolutionTime: {
+              $avg: {
+                $cond: [
+                  { $ne: ['$resolvedAt', null] },
+                  { $subtract: ['$resolvedAt', '$createdAt'] },
+                  null,
+                ],
+              },
+            },
+          },
+        },
+      ]),
 
-      skipData
-        ? []
-        : ticketRepo.aggregate([
-            { $match: { ...ticketBase, createdAt: { $gte: thirtyDaysAgo } } },
-            { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }, assigned: { $sum: 1 } } },
-            { $sort: { _id: 1 } },
-          ]),
+      // ── 12. per-agent feedback ──
+      skipData ? [] : ticketFeedbackRepo.aggregate([
+        { $match: { companyId: companyObjId, agentId: { $ne: null } } },
+        {
+          $group: {
+            _id: '$agentId',
+            totalRatings: { $sum: 1 },
+            avgRating: { $avg: '$rating' },
+            satisfiedCount: { $sum: { $cond: [{ $gte: ['$rating', 4] }, 1, 0] } },
+          },
+        },
+      ]),
 
-      skipData
-        ? []
-        : ticketRepo.aggregate([
-            { $match: { ...ticketBase, resolvedAt: { $gte: thirtyDaysAgo } } },
-            { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$resolvedAt' } }, count: { $sum: 1 } } },
-            { $sort: { _id: 1 } },
-          ]),
+      // ── 13. SLA breached count ──
+      skipData ? [] : ticketRepo.aggregate([
+        {
+          $match: {
+            ...ticketBase,
+            status: TICKET_STATUS.CLOSED,
+            resolvedAt: { $ne: null },
+          },
+        },
+        {
+          $project: {
+            resolutionTime: { $subtract: ['$resolvedAt', '$createdAt'] },
+          },
+        },
+        { $match: { resolutionTime: { $gt: SLA_TARGET_MS } } },
+        { $count: 'count' },
+      ]),
+
+      // ── 14. trend: assigned per day (30 days) ──
+      skipData ? [] : ticketRepo.aggregate([
+        { $match: { ...ticketBase, createdAt: { $gte: thirtyDaysAgo } } },
+        { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }, count: { $sum: 1 } } },
+      ]),
+
+      // ── 15. trend: resolved per day (30 days) ──
+      skipData ? [] : ticketRepo.aggregate([
+        { $match: { ...ticketBase, resolvedAt: { $gte: thirtyDaysAgo } } },
+        { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$resolvedAt' } }, count: { $sum: 1 } } },
+      ]),
+
+      // ── 16. heatmap: tickets by hour (30 days) ──
+      skipData ? [] : ticketRepo.aggregate([
+        { $match: { ...ticketBase, createdAt: { $gte: thirtyDaysAgo } } },
+        { $group: { _id: { $hour: '$createdAt' }, count: { $sum: 1 } } },
+        { $sort: { _id: 1 } },
+      ]),
     ]);
 
-    const avgFirstResponseTime = avgFirstResponseAgg[0]
-      ? Math.round(avgFirstResponseAgg[0].avgTime / 60000)
+    // ─────────────────────────────────────────────
+    // DERIVE & COMPUTE ALL SECTIONS
+    // ─────────────────────────────────────────────
+
+    // ── 1. TEAM STATS ──
+    const agentMap = {};
+    (agentsList || []).forEach((a) => {
+      agentMap[a._id.toString()] = { name: a.name, email: a.email, lastLogin: a.lastLogin };
+    });
+
+    let overloadedCount = 0;
+    let onlineCount = 0;
+    let idleCount = 0;
+
+    const agentTicketMap = {};
+    (agentTicketAgg || []).forEach((a) => {
+      const id = a._id.toString();
+      agentTicketMap[id] = a;
+      if (a.activeTickets > 15) overloadedCount++;
+      if (a.activeTickets > 0) onlineCount++;
+    });
+
+    // Build agentPerformance list
+    const agentFeedbackMap = {};
+    (agentFeedbackAgg || []).forEach((f) => {
+      agentFeedbackMap[f._id.toString()] = f;
+    });
+
+    const agentsPerformance = [];
+    (agentsList || []).forEach((agent) => {
+      const id = agent._id.toString();
+      const t = agentTicketMap[id] || { activeTickets: 0, resolvedTickets: 0, avgResponseTime: null, avgResolutionTime: null };
+      const fb = agentFeedbackMap[id] || { totalRatings: 0, avgRating: 0, satisfiedCount: 0 };
+
+      const avgResponseTime = t.avgResponseTime ? Math.round(t.avgResponseTime / 60000) : 0;
+      const avgResolutionTime = t.avgResolutionTime ? Math.round(t.avgResolutionTime / 60000) : 0;
+      const csat = fb.totalRatings > 0 ? Math.round((fb.satisfiedCount / fb.totalRatings) * 100) : 0;
+
+      let workload = 'low';
+      if (t.activeTickets >= 12) workload = 'high';
+      else if (t.activeTickets >= 5) workload = 'normal';
+
+      let performance = 'average';
+      if (csat >= 80 && avgResponseTime <= 5 && avgResolutionTime <= 90) performance = 'good';
+      else if (csat < 60 || avgResponseTime > 10 || avgResolutionTime > 200) performance = 'bad';
+
+      agentsPerformance.push({
+        agentId: id,
+        name: agent.name,
+        status: t.activeTickets > 0 ? 'online' : 'offline',
+        activeTickets: t.activeTickets,
+        resolvedTickets: t.resolvedTickets,
+        avgResponseTime,
+        avgResolutionTime,
+        csat,
+        workload,
+        performance,
+      });
+
+      if (t.activeTickets === 0) idleCount++;
+    });
+
+    onlineCount = agentsPerformance.filter((a) => a.status === 'online').length;
+    idleCount = agentsPerformance.filter((a) => a.activeTickets === 0 && a.status === 'online').length;
+    // If an agent has 0 tickets but we haven't set them online from activity, adjust
+    // We'll mark agents with resolved tickets as potentially online too
+    agentsPerformance.forEach((a) => {
+      if (a.resolvedTickets > 0 && a.status === 'offline') a.status = 'online';
+    });
+    onlineCount = agentsPerformance.filter((a) => a.status === 'online').length;
+    idleCount = agentsPerformance.filter((a) => a.status === 'online' && a.activeTickets === 0).length;
+    overloadedCount = agentsPerformance.filter((a) => a.activeTickets > 15).length;
+
+    const teamStats = {
+      totalAgents,
+      onlineAgents: onlineCount,
+      idleAgents: idleCount,
+      overloadedAgents: overloadedCount,
+    };
+
+    // ── 2. KPIs ──
+    const avgData = avgResponseResolutionAgg[0] || {};
+    const avgFirstResponseTime = avgData.avgResponseTime ? Math.round(avgData.avgResponseTime / 60000) : 0;
+    const avgResolutionTime = avgData.avgResolutionTime ? Math.round(avgData.avgResolutionTime / 60000) : 0;
+
+    const fbData = feedbackAgg[0] || { totalRatings: 0, avgRating: 0, satisfiedCount: 0 };
+    const csatScore = fbData.totalRatings > 0
+      ? Math.round((fbData.satisfiedCount / fbData.totalRatings) * 100)
       : 0;
 
-    const channelTotal = channelDistAgg.reduce((sum, c) => sum + c.count, 0) || 1;
-    const channelDistribution = channelDistAgg.map((c) => ({
-      name: c._id ? c._id.charAt(0).toUpperCase() + c._id.slice(1) : 'Unknown',
-      count: c.count,
-      percent: Math.round((c.count / channelTotal) * 100),
-    }));
+    const kpis = {
+      activeTickets,
+      unassignedTickets,
+      resolvedToday,
+      avgFirstResponseTime,
+      avgResolutionTime,
+      csatScore,
+    };
 
-    const feedbackData = feedbackAgg[0] || { totalRatings: 0, avgRating: 0, satisfiedCount: 0 };
-    const avgFeedback = Math.round(feedbackData.avgRating * 10) / 10;
-    const csatScore = feedbackData.totalRatings > 0
-      ? Math.round((feedbackData.satisfiedCount / feedbackData.totalRatings) * 100)
-      : 0;
-
+    // ── 3. GOALS ──
     const goalTarget = 500;
     const goalPercentage = totalResolved > 0
       ? Math.min(100, Math.round((totalResolved / goalTarget) * 100))
       : 0;
 
-    const callStatsData = callStatsAgg[0] || { totalCalls: 0, answeredCalls: 0, missedCalls: 0, avgDuration: 0 };
-    const callAvgDurationMs = Math.round(callStatsData.avgDuration || 0) * 1000;
-    const callAvgMinutes = Math.floor(callAvgDurationMs / 60000);
-    const callAvgSeconds = Math.floor((callAvgDurationMs % 60000) / 1000);
-    const avgCallDurationString = `${callAvgMinutes}:${callAvgSeconds < 10 ? '0' : ''}${callAvgSeconds}s`;
+    const goals = {
+      tickets: {
+        total: goalTarget,
+        current: totalResolved,
+        percentageCompleted: goalPercentage,
+      },
+    };
 
+    // ── 4. CALL PERFORMANCE ──
+    const callData = callStatsAgg[0] || { totalCalls: 0, answered: 0, missed: 0, avgDuration: 0, totalDuration: 0 };
+    const avgCallDur = callData.totalCalls > 0 ? Math.round(callData.totalDuration / callData.totalCalls) : 0;
+    const answerRate = callData.totalCalls > 0 ? Math.round((callData.answered / callData.totalCalls) * 100) : 0;
+
+    const callPerformance = {
+      totalCalls: callData.totalCalls,
+      answered: callData.answered,
+      missed: callData.missed,
+      avgDuration: avgCallDur,
+      answerRate,
+    };
+
+    // ── 5. CHANNEL DISTRIBUTION ──
+    const channelTotal = channelDistAgg.reduce((s, c) => s + c.count, 0) || 1;
+    const channelDistribution = channelDistAgg.map((c) => ({
+      name: c._id ? c._id.charAt(0).toUpperCase() + c._id.slice(1) : 'Unknown',
+      count: c.count,
+      percentage: Math.round((c.count / channelTotal) * 100),
+    }));
+
+    // ── 6. AGENTS PERFORMANCE (already built above) ──
+    // ── 7. TOP & LOW PERFORMERS ──
+    const sorted = [...agentsPerformance].sort((a, b) => b.csat - a.csat || b.resolvedTickets - a.resolvedTickets);
+    const topAgents = sorted.slice(0, 3).map((a) => ({
+      agentId: a.agentId,
+      name: a.name,
+      score: Math.round((a.csat + Math.max(0, 100 - a.avgResponseTime * 5) + Math.max(0, 100 - a.avgResolutionTime)) / 3),
+      resolvedTickets: a.resolvedTickets,
+      csat: a.csat,
+    }));
+
+    const lowPerformers = sorted
+      .filter((a) => a.performance === 'bad' || a.csat < 60)
+      .slice(0, 3)
+      .map((a) => {
+        const issues = [];
+        if (a.avgResponseTime > 10) issues.push('high response time');
+        if (a.avgResolutionTime > 200) issues.push('high resolution time');
+        if (a.csat < 60) issues.push('low CSAT');
+        if (!issues.length) issues.push('below average performance');
+        return {
+          agentId: a.agentId,
+          name: a.name,
+          score: Math.round((a.csat + Math.max(0, 100 - a.avgResponseTime * 5) + Math.max(0, 100 - a.avgResolutionTime)) / 3),
+          resolvedTickets: a.resolvedTickets,
+          csat: a.csat,
+          issues,
+        };
+      });
+
+    // ── 8. WORKLOAD DISTRIBUTION ──
+    const totalCapacity = totalAgents * CAPACITY_PER_AGENT;
+    const usedCapacity = agentsPerformance.reduce((s, a) => s + a.activeTickets, 0);
+    const workloadPct = totalCapacity > 0 ? Math.min(100, Math.round((usedCapacity / totalCapacity) * 100)) : 0;
+    let workloadLevel = 'normal';
+    if (workloadPct >= 80) workloadLevel = 'high';
+    else if (workloadPct <= 30) workloadLevel = 'low';
+
+    const workload = {
+      totalCapacity,
+      used: usedCapacity,
+      percentage: workloadPct,
+      level: workloadLevel,
+    };
+
+    // ── 9. SLA METRICS ──
+    const overdueCount = activeTickets > 0
+      ? agentsPerformance.reduce((s, a) => s + a.activeTickets, 0)
+      : 0;
+    // More precise overdue: tickets not closed with createdAt < SLA deadline
+    // We already have activeTickets, but for overdue we need count filtered by time
+    // Use the SLA approach from agent dashboard
+    const overdueTickets = skipData ? 0 : await ticketRepo.count({
+      ...ticketBase,
+      status: { $ne: TICKET_STATUS.CLOSED },
+      createdAt: { $lt: SLA_4H_AGO },
+    });
+
+    const breachedCount = slaBreachedAgg[0]?.count || 0;
+    const withinSla = Math.max(0, totalResolved - breachedCount);
+    const totalTicketsWithSla = totalResolved + (activeTickets || 0);
+    const slaCompliance = totalTicketsWithSla > 0
+      ? Math.round((withinSla / totalTicketsWithSla) * 100)
+      : 100;
+
+    const sla = {
+      overdueTickets,
+      breachedTickets: breachedCount,
+      withinSla,
+      slaCompliancePercentage: slaCompliance,
+    };
+
+    // ── 10. INSIGHTS ──
+    const insights = [];
+    if (unassignedTickets > 10) {
+      insights.push({
+        type: 'warning',
+        metric: 'unassignedTickets',
+        message: `${unassignedTickets} tickets unassigned — exceeding recommended threshold`,
+        severity: 'high',
+      });
+    }
+    if (avgFirstResponseTime > 5) {
+      insights.push({
+        type: 'warning',
+        metric: 'avgResponseTime',
+        message: `Average response time (${avgFirstResponseTime} min) is above the 5 min target`,
+        severity: 'medium',
+      });
+    }
+    if (csatScore > 0 && csatScore < 60) {
+      insights.push({
+        type: 'critical',
+        metric: 'csatScore',
+        message: `CSAT score (${csatScore}%) is critically low, below 60% threshold`,
+        severity: 'high',
+      });
+    }
+    if (overloadedCount > 0) {
+      insights.push({
+        type: 'warning',
+        metric: 'overloadedAgents',
+        message: `${overloadedCount} agents are overloaded with more than 15 active tickets`,
+        severity: 'high',
+      });
+    }
+    if (idleCount > 0 && activeTickets > 0) {
+      insights.push({
+        type: 'info',
+        metric: 'idleAgents',
+        message: `${idleCount} agents are idle while ${activeTickets} tickets need attention`,
+        severity: 'medium',
+      });
+    }
+    if (overdueTickets > 0) {
+      insights.push({
+        type: 'critical',
+        metric: 'overdueTickets',
+        message: `${overdueTickets} tickets have breached SLA deadline and need immediate action`,
+        severity: 'high',
+      });
+    }
+    if (agentsPerformance.every((a) => a.activeTickets === 0)) {
+      insights.push({
+        type: 'info',
+        metric: 'agentActivity',
+        message: 'All agents are currently idle with no active tickets',
+        severity: 'low',
+      });
+    }
+    if (totalResolved === 0) {
+      insights.push({
+        type: 'info',
+        metric: 'resolvedToday',
+        message: 'No tickets have been resolved yet today',
+        severity: 'low',
+      });
+    }
+
+    // ── 11. SUGGESTIONS ──
+    const suggestions = [];
+    if (overloadedCount > 0 && idleCount > 0) {
+      suggestions.push({
+        type: 'optimization',
+        action: 'reassign',
+        message: `Reassign tickets from ${overloadedCount} overloaded agents to ${idleCount} idle agents`,
+        priority: 'high',
+      });
+    }
+    if (unassignedTickets > 5) {
+      suggestions.push({
+        type: 'assignment',
+        action: 'assign',
+        message: `Assign ${unassignedTickets} unassigned tickets to available agents to reduce queue`,
+        priority: 'high',
+      });
+    }
+    if (avgFirstResponseTime > 5) {
+      suggestions.push({
+        type: 'performance',
+        action: 'coach',
+        message: 'Response time is above target; consider coaching agents on faster initial replies',
+        priority: 'medium',
+      });
+    }
+    if (csatScore > 0 && csatScore < 70) {
+      suggestions.push({
+        type: 'quality',
+        action: 'train',
+        message: 'CSAT score is below target; schedule quality training for low-performing agents',
+        priority: 'medium',
+      });
+    }
+    if (agentTicketAgg && agentTicketAgg.length > 0 && totalAgents > 0) {
+      const utilization = Math.round((usedCapacity / (totalAgents * CAPACITY_PER_AGENT)) * 100);
+      if (utilization < 30) {
+        suggestions.push({
+          type: 'optimization',
+          action: 'redistribute',
+          message: 'Team is underutilized; consider redistributing workload or reducing team size',
+          priority: 'low',
+        });
+      } else if (utilization > 85) {
+        suggestions.push({
+          type: 'staffing',
+          action: 'hire',
+          message: 'Team is near full capacity; consider adding more agents during peak hours',
+          priority: 'high',
+        });
+      }
+    }
+
+    // ── 12. TREND DATA (gap-filled, 30 days) ──
     const trendMap = {};
-    assignedTrendAgg.forEach((d) => { trendMap[d._id] = { assigned: d.assigned, resolved: 0 }; });
+    assignedTrendAgg.forEach((d) => { trendMap[d._id] = { assigned: d.count, resolved: 0 }; });
     resolvedTrendAgg.forEach((d) => {
       if (trendMap[d._id]) trendMap[d._id].resolved = d.count;
       else trendMap[d._id] = { assigned: 0, resolved: d.count };
     });
-    const trendData = Object.entries(trendMap)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([date, val]) => ({ _id: date, assigned: val.assigned, resolved: val.resolved }));
 
+    const trendStart = new Date(thirtyDaysAgo);
+    trendStart.setUTCHours(0, 0, 0, 0);
+    const trendEnd = new Date(now);
+    trendEnd.setUTCHours(23, 59, 59, 999);
+    const trendData = [];
+    const cursor = new Date(trendStart);
+    while (cursor <= trendEnd) {
+      const key = cursor.toISOString().slice(0, 10);
+      const val = trendMap[key] || { assigned: 0, resolved: 0 };
+      trendData.push({ date: key, assigned: val.assigned, resolved: val.resolved });
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+
+    // ── 13. HEATMAP (all 24 hours filled) ──
+    const heatMap = {};
+    (heatmapAgg || []).forEach((h) => { heatMap[h._id] = h.count; });
+    const heatmap = Array.from({ length: 24 }, (_, i) => ({
+      hour: i,
+      load: heatMap[i] || 0,
+    }));
+
+    // ── 14. TEAM SCORE ──
+    const responseScore = Math.max(0, 100 - avgFirstResponseTime * 5);
+    const resolutionScore = Math.max(0, 100 - avgResolutionTime * 0.5);
+    const overallScore = Math.round(csatScore * 0.40 + responseScore * 0.30 + resolutionScore * 0.30);
+    let grade = 'C';
+    if (overallScore >= 90) grade = 'A';
+    else if (overallScore >= 80) grade = 'B+';
+    else if (overallScore >= 70) grade = 'B';
+    else if (overallScore >= 60) grade = 'C+';
+
+    const teamScore = {
+      overall: overallScore,
+      breakdown: {
+        csatScore: { value: csatScore, weight: 0.40, contribution: Math.round(csatScore * 0.40) },
+        responseTime: { value: responseScore, weight: 0.30, contribution: Math.round(responseScore * 0.30) },
+        resolutionTime: { value: resolutionScore, weight: 0.30, contribution: Math.round(resolutionScore * 0.30) },
+      },
+      grade,
+    };
+
+    // ─────────────────────────────────────────────
+    // FINAL RESPONSE
+    // ─────────────────────────────────────────────
     return {
       dashboard: {
-        totalAgents,
-        activeTickets,
-        unassignedTickets,
-        resolvedToday,
-        kpis: {
-          avgFirstResponseTime,
-        },
-        uiKpis: {
-          csatScore,
-          avgFeedback,
-          goalTickets: {
-            total: goalTarget,
-            current: totalResolved,
-            percentageCompleted: goalPercentage,
-          },
-          answeredCalls: callStatsData.answeredCalls,
-          totalCalls: callStatsData.totalCalls,
-          missedCalls: callStatsData.missedCalls,
-          avgCallDurationString,
-        },
+        teamStats,
+        kpis,
+        goals,
+        callPerformance,
         channelDistribution,
+        agentsPerformance,
+        topAgents,
+        lowPerformers,
+        workload,
+        sla,
+        insights,
+        suggestions,
         trendData,
+        heatmap,
+        teamScore,
       },
     };
   }
