@@ -1,10 +1,7 @@
-import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo } from '../repositories/index.js';
-import User from '../models/user.js';
-import Company from '../models/company.js';
-import Ticket from '../models/ticket.js';
-import ChatSession from '../models/chatSession.js';
-import { ROLES, TICKET_STATUS, CHAT_STATUS } from '../constants/index.js';
+import { companyRepo, userRepo } from '../repositories/index.js';
+import { ROLES } from '../constants/index.js';
 import telegramService from '../services/telegramService.js';
+import ownerDashboardService from '../services/owner/ownerDashboardService.js';
 
 /**
  * @desc    Get dashboard summary for company owner
@@ -14,97 +11,8 @@ import telegramService from '../services/telegramService.js';
 const getDashboardSummary = async (req, res, next) => {
   try {
     const { companyId } = req.user;
-    const now = new Date();
-    const sevenDaysAgo = new Date(now);
-    sevenDaysAgo.setDate(now.getDate() - 7);
-    const fourteenDaysAgo = new Date(now);
-    fourteenDaysAgo.setDate(now.getDate() - 14);
-
-    const percentageDelta = (current, previous) => {
-      if (!previous && !current) return 0;
-      if (!previous) return 100;
-      return Math.round(((current - previous) / previous) * 100);
-    };
-
-    const [
-      totalAgents,
-      totalManagers,
-      totalTeamLeaders,
-      activeManagers,
-      totalTickets,
-      openTickets,
-      resolvedTickets,
-      totalChats,
-      activeChats,
-      ticketsLast7Days,
-      ticketsPrevious7Days,
-      chatsLast7Days,
-      chatsPrevious7Days,
-      company
-    ] = await Promise.all([
-      userRepo.count({ companyId, role: ROLES.AGENT }),
-      userRepo.count({ companyId, role: ROLES.COMPANY_MANAGER }),
-      userRepo.count({ companyId, role: ROLES.TEAM_LEADER }),
-      userRepo.count({ companyId, role: ROLES.COMPANY_MANAGER, isActive: true }),
-      ticketRepo.count({ companyId }),
-      ticketRepo.count({ companyId, status: { $in: [TICKET_STATUS.PENDING, TICKET_STATUS.OPENED] } }),
-      ticketRepo.count({ companyId, status: { $in: [TICKET_STATUS.CLOSED, TICKET_STATUS.CLOSED] } }),
-      ChatSession.countDocuments({ companyId }),
-      ChatSession.countDocuments({ companyId, status: CHAT_STATUS.ACTIVE }),
-      ticketRepo.count({ companyId, createdAt: { $gte: sevenDaysAgo } }),
-      ticketRepo.count({ companyId, createdAt: { $gte: fourteenDaysAgo, $lt: sevenDaysAgo } }),
-      ChatSession.countDocuments({ companyId, createdAt: { $gte: sevenDaysAgo } }),
-      ChatSession.countDocuments({ companyId, createdAt: { $gte: fourteenDaysAgo, $lt: sevenDaysAgo } }),
-      companyRepo.model.findById(companyId).select('channelsConfig'),
-    ]);
-
-    const totalWorkforce = totalAgents + totalManagers + totalTeamLeaders;
-    const ticketResolutionRate = totalTickets ? Math.round((resolvedTickets / totalTickets) * 100) : 0;
-    const managerActivationRate = totalManagers ? Math.round((activeManagers / totalManagers) * 100) : 0;
-    const activeChannels = [
-      company?.channelsConfig?.telegram?.isActive,
-      company?.channelsConfig?.whatsapp?.isActive,
-      company?.channelsConfig?.webChat?.isActive,
-    ].filter(Boolean).length;
-
-    res.status(200).json({
-      success: true,
-      data: {
-        users: {
-          agents: totalAgents,
-          managers: totalManagers,
-          teamLeaders: totalTeamLeaders,
-          totalWorkforce,
-          activeManagers,
-          managerActivationRate,
-        },
-        tickets: {
-          total: totalTickets,
-          open: openTickets,
-          resolved: resolvedTickets,
-          resolutionRate: ticketResolutionRate,
-        },
-        chats: {
-          total: totalChats,
-          active: activeChats,
-        },
-        insights: {
-          activeChannels,
-          trends: {
-            tickets: {
-              current: ticketsLast7Days,
-              previous: ticketsPrevious7Days,
-              delta: percentageDelta(ticketsLast7Days, ticketsPrevious7Days),
-            },
-            chats: {
-              current: chatsLast7Days,
-              previous: chatsPrevious7Days,
-              delta: percentageDelta(chatsLast7Days, chatsPrevious7Days),
-            },
-          },
-        },
-      },
-    });
+    const dashboard = await ownerDashboardService.getDashboard(companyId, req.query);
+    res.status(200).json({ success: true, data: { dashboard } });
   } catch (error) {
     next(error);
   }
