@@ -1,15 +1,27 @@
-import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo, ticketFeedbackRepo } from '../repositories/index.js';
-import { User, Ticket, ChatSession, QAAnalysis, Call } from '../models/index.js';
+import { companyRepo, userRepo, ticketRepo, chatSessionRepo, eventLogRepo, callRepo, qaAnalysisRepo, ticketFeedbackRepo, notificationRepo } from '../repositories/index.js';
 import { ROLES, TICKET_STATUS } from '../constants/index.js';
 import ApiError from '../utils/apiError.js';
 import { getIO } from '../sockets/index.js';
-import { notificationRepo } from '../repositories/index.js';
 import AgentDashboardService from './agent/agentDashboardService.js';
 import mongoose from 'mongoose';
 
 class TeamLeaderService {
   _isTeamLeader(role) {
     return role === ROLES.TEAM_LEADER;
+  }
+
+  _timeAgo(date) {
+    if (!date) return '';
+    const diff = Date.now() - new Date(date).getTime();
+    if (diff < 0) return 'just now';
+    const seconds = Math.floor(diff / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+    if (days > 0) return `${days}d ago`;
+    if (hours > 0) return `${hours}h ago`;
+    if (minutes > 0) return `${minutes}min ago`;
+    return 'just now';
   }
 
   async _teamAgentObjectIds(companyId, leaderUserId) {
@@ -671,25 +683,189 @@ class TeamLeaderService {
 
     if (!agent) throw ApiError.notFound('Agent not found');
 
-    try {
-      const dashboard = await AgentDashboardService.getAgentDashboard(companyId, agentId);
-      // Merge required metrics into the agent object
-      if (dashboard) {
-        agent.assignedTickets = dashboard.uiKpis?.assignedTickets;
-        agent.pendingTickets = dashboard.uiKpis?.pendingTickets;
-        agent.closedTickets = dashboard.uiKpis?.closedTickets;
-        agent.avgFirstResponseTime = dashboard.kpis?.avgFirstResponseTime;
-        agent.avgResolutionTime = dashboard.kpis?.avgResolutionTime;
-        agent.avgFeedback = dashboard.uiKpis?.avgFeedback;
-        agent.csatScore = dashboard.uiKpis?.csatScore;
-        agent.trackerTime = dashboard.trackerTime;
-      }
-    } catch (err) {
-      console.error('Failed to load agent dashboard metrics:', err.message);
-      // Continue without merged metrics
-    }
+    const companyObjId = new mongoose.Types.ObjectId(companyId);
+    const agentObjId = new mongoose.Types.ObjectId(agentId);
 
-    return agent;
+    const [
+      dashboard,
+      activeTickets,
+      recentResolved,
+      recentCalls,
+      feedbackAgg,
+      eventActivity,
+    ] = await Promise.all([
+      AgentDashboardService.getAgentDashboard(companyId, agentId).catch(() => null),
+      ticketRepo.model.find({
+        companyId: companyObjId,
+        assignedTo: agentObjId,
+        status: { $in: [TICKET_STATUS.PENDING, TICKET_STATUS.OPENED] },
+      })
+        .sort({ createdAt: -1 })
+        .limit(20)
+        .populate('userId', 'name email')
+        .select('subject status priority channel category createdAt context')
+        .lean(),
+      ticketRepo.model.find({
+        companyId: companyObjId,
+        assignedTo: agentObjId,
+        status: TICKET_STATUS.CLOSED,
+      })
+        .sort({ resolvedAt: -1 })
+        .limit(10)
+        .populate('userId', 'name email')
+        .select('subject status priority channel category createdAt resolvedAt firstResponseAt')
+        .lean(),
+      callRepo.model.find({ companyId: companyObjId, agentId: agentObjId })
+        .sort({ startedAt: -1 })
+        .limit(10)
+        .populate('customerId', 'name phone')
+        .select('status duration startedAt customerPhone notes')
+        .lean(),
+      ticketFeedbackRepo.aggregate([
+        { $match: { companyId: companyObjId, agentId: agentObjId } },
+        {
+          $group: {
+            _id: null,
+            totalRatings: { $sum: 1 },
+            avgRating: { $avg: '$rating' },
+            satisfiedCount: { $sum: { $cond: [{ $gte: ['$rating', 4] }, 1, 0] } },
+            count1: { $sum: { $cond: [{ $eq: ['$rating', 1] }, 1, 0] } },
+            count2: { $sum: { $cond: [{ $eq: ['$rating', 2] }, 1, 0] } },
+            count3: { $sum: { $cond: [{ $eq: ['$rating', 3] }, 1, 0] } },
+            count4: { $sum: { $cond: [{ $eq: ['$rating', 4] }, 1, 0] } },
+            count5: { $sum: { $cond: [{ $eq: ['$rating', 5] }, 1, 0] } },
+          },
+        },
+      ]),
+      eventLogRepo.aggregate([
+        {
+          $match: {
+            companyId: companyObjId,
+            'metadata.agentId': agentId,
+            eventType: {
+              $in: ['ticket_claimed', 'ticket_resolved', 'ticket_closed', 'agent_replied', 'ticket_created'],
+            },
+            timestamp: { $gte: new Date(Date.now() - 72 * 60 * 60 * 1000) },
+          },
+        },
+        { $sort: { timestamp: -1 } },
+        { $limit: 15 },
+        { $project: { eventType: 1, entityId: 1, timestamp: 1, _id: 0 } },
+      ]),
+    ]);
+
+    const fb = feedbackAgg[0] || { totalRatings: 0, avgRating: 0, satisfiedCount: 0, count1: 0, count2: 0, count3: 0, count4: 0, count5: 0 };
+    const csat = fb.totalRatings > 0 ? Math.round((fb.satisfiedCount / fb.totalRatings) * 100) : 0;
+
+    const kpis = dashboard?.kpis || {};
+    const todayStats = dashboard?.todayStats || {};
+    const slaStats = dashboard?.slaStats || {};
+    const callPerf = dashboard?.callPerformance || {};
+
+    const now = Date.now();
+    const activeTicketsMapped = activeTickets.map((t) => ({
+      _id: t._id,
+      subject: t.subject,
+      status: t.status,
+      priority: t.priority,
+      channel: t.channel,
+      category: t.category,
+      customer: t.userId ? { _id: t.userId._id, name: t.userId.name, email: t.userId.email } : null,
+      createdAt: t.createdAt,
+      hoursSinceCreation: t.createdAt ? Math.round((now - new Date(t.createdAt).getTime()) / 3600000) : 0,
+      hasSlaBreach: t.createdAt && (now - new Date(t.createdAt).getTime()) > 4 * 3600000,
+    }));
+
+    const recentResolvedMapped = recentResolved.map((t) => ({
+      _id: t._id,
+      subject: t.subject,
+      channel: t.channel,
+      priority: t.priority,
+      customer: t.userId ? { _id: t.userId._id, name: t.userId.name, email: t.userId.email } : null,
+      createdAt: t.createdAt,
+      resolvedAt: t.resolvedAt,
+      resolutionHours: t.createdAt && t.resolvedAt
+        ? Math.round((new Date(t.resolvedAt) - new Date(t.createdAt)) / 3600000)
+        : 0,
+      responseTimeMin: t.createdAt && t.firstResponseAt
+        ? Math.round((new Date(t.firstResponseAt) - new Date(t.createdAt)) / 60000)
+        : null,
+    }));
+
+    const recentCallsMapped = recentCalls.map((c) => ({
+      _id: c._id,
+      customer: c.customerId ? { _id: c.customerId._id, name: c.customerId.name, phone: c.customerId.phone } : null,
+      customerPhone: c.customerPhone,
+      status: c.status,
+      duration: c.duration,
+      notes: c.notes,
+      startedAt: c.startedAt,
+    }));
+
+    const typeLabels = {
+      ticket_claimed: 'Claimed ticket',
+      ticket_resolved: 'Resolved ticket',
+      ticket_closed: 'Closed ticket',
+      agent_replied: 'Replied to ticket',
+      ticket_created: 'Created ticket',
+    };
+    const recentActivity = eventActivity.map((e) => ({
+      type: e.eventType,
+      ticketId: e.entityId,
+      label: `${typeLabels[e.eventType] || e.eventType} #${e.entityId?.toString().slice(-6) || ''}`,
+      timeAgo: e.timestamp ? this._timeAgo(e.timestamp) : '',
+    }));
+
+    return {
+      agent: {
+        _id: agent._id,
+        companyId: agent.companyId,
+        name: agent.name,
+        email: agent.email,
+        phone: agent.phone,
+        profileImage: agent.profileImage,
+        isActive: agent.isActive,
+        lastLogin: agent.lastLogin,
+        teamLeaderId: agent.teamLeaderId,
+        onboardingStep: agent.onboardingStep,
+        supervisorNotes: agent.supervisorNotes,
+      },
+      performance: {
+        assignedTickets: kpis.assignedTickets || 0,
+        pendingTickets: kpis.pendingTickets || 0,
+        inProgressTickets: kpis.inProgressTickets || 0,
+        resolvedTickets: kpis.resolvedTickets || 0,
+        avgFirstResponseTime: kpis.avgFirstResponseTime || 0,
+        avgResolutionTime: kpis.avgResolutionTime || 0,
+        csatScore: kpis.csatScore || 0,
+        todayTickets: todayStats.ticketsToday || 0,
+        todayResolved: todayStats.resolvedToday || 0,
+        todayAvgResponse: todayStats.avgResponseToday || 0,
+        todayAvgResolution: todayStats.avgResolutionToday || 0,
+      },
+      sla: {
+        overdueTickets: slaStats.overdueTickets || 0,
+        dueSoon: slaStats.dueSoon || 0,
+        breachedTickets: slaStats.breachedTickets || 0,
+      },
+      calls: {
+        total: callPerf.totalCalls || 0,
+        answered: callPerf.answered || 0,
+        missed: callPerf.missed || 0,
+        avgDuration: callPerf.avgDuration || 0,
+        answerRate: callPerf.answerRate || 0,
+        recent: recentCallsMapped,
+      },
+      activeTickets: activeTicketsMapped,
+      recentResolved: recentResolvedMapped,
+      feedback: {
+        totalRatings: fb.totalRatings,
+        avgRating: fb.totalRatings > 0 ? Math.round(fb.avgRating * 10) / 10 : 0,
+        csat,
+        ratingBreakdown: { 1: fb.count1, 2: fb.count2, 3: fb.count3, 4: fb.count4, 5: fb.count5 },
+      },
+      recentActivity,
+    };
   }
 
   // Notify an agent via Socket.IO
@@ -845,6 +1021,31 @@ class TeamLeaderService {
 
     const trendData = Object.keys(dailyMap).map((k) => ({ label: k, value: dailyMap[k] }));
 
+    // ── Weekly heatmap: day-of-week × hour-of-day grid ──
+    const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const heatGrid = Array.from({ length: 7 }, () => Array(24).fill(0));
+    let maxIntensity = 0;
+
+    tickets.forEach((t) => {
+      if (!t.resolvedAt) return;
+      const d = new Date(t.resolvedAt);
+      const dayIdx = d.getDay();
+      const hour = d.getHours();
+      heatGrid[dayIdx][hour]++;
+      const val = heatGrid[dayIdx][hour];
+      if (val > maxIntensity) maxIntensity = val;
+    });
+
+    const weeklyHeatmap = {
+      noActivity: totalResolved === 0,
+      maxIntensity,
+      days: DAY_NAMES.map((name, dayIdx) => ({
+        day: name,
+        dayIndex: dayIdx,
+        hours: heatGrid[dayIdx],
+      })),
+    };
+
     return {
       totalResolved,
       avgResolutionTimeMs: totalResolved ? totalResolutionTime / totalResolved : 0,
@@ -852,6 +1053,7 @@ class TeamLeaderService {
       escalatedCount,
       channelDistribution,
       trendData,
+      weeklyHeatmap,
       period: normalizedPeriod,
     };
   }

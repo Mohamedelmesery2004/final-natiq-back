@@ -9,6 +9,46 @@ const router = Router();
 
 router.use(protect, tenantIsolation);
 
+// ── Dashboard ──────────────────────────────────
+router.get(
+  '/dashboard',
+  allowRoles(ROLES.COMPANY_MANAGER, ROLES.PLATFORM_SUPER_ADMIN),
+  managerController.getDashboardSummary
+);
+
+// ── Company Settings ────────────────────────────
+router.get(
+  '/settings',
+  allowRoles(ROLES.COMPANY_MANAGER, ROLES.PLATFORM_SUPER_ADMIN),
+  managerController.getCompanySettings
+);
+router.put(
+  '/settings',
+  allowRoles(ROLES.COMPANY_MANAGER, ROLES.PLATFORM_SUPER_ADMIN),
+  validate(managerValidator.updateCompanySettings),
+  managerController.updateCompanySettings
+);
+
+// ── Telegram Webhook ────────────────────────────
+router.post(
+  '/telegram/webhook',
+  allowRoles(ROLES.COMPANY_MANAGER, ROLES.PLATFORM_SUPER_ADMIN),
+  managerController.updateTelegramWebhook
+);
+
+// ── Staff Listing ───────────────────────────────
+router.get(
+  '/team-leaders',
+  allowRoles(ROLES.COMPANY_MANAGER, ROLES.PLATFORM_SUPER_ADMIN),
+  managerController.listTeamLeaders
+);
+router.get(
+  '/agents',
+  allowRoles(ROLES.COMPANY_MANAGER, ROLES.PLATFORM_SUPER_ADMIN),
+  managerController.listAgents
+);
+
+// ── Audit Logs ─────────────────────────────────
 router.get(
   '/audit-logs',
   requirePermission(RESOURCES.AUDIT_LOG, ACTIONS.READ),

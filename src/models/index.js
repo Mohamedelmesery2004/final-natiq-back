@@ -11,6 +11,7 @@ import AuditLog from './auditLog.js';
 import InternalMessage from './internalMessage.js';
 import Task from './task.js';
 import Notification from './notification.js';
+import SubscriptionPlan from './subscriptionPlan.js';
 
 export {
   Company,
@@ -26,4 +27,5 @@ export {
   InternalMessage,
   Task,
   Notification,
+  SubscriptionPlan,
 };

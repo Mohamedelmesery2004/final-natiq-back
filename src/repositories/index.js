@@ -13,6 +13,7 @@ import {
   InternalMessage,
   Task,
   Notification,
+  SubscriptionPlan,
 } from '../models/index.js';
 
 class CompanyRepository extends BaseRepository {}
@@ -46,3 +47,6 @@ export const auditLogRepo = new AuditLogRepository(AuditLog);
 export const internalMessageRepo = new InternalMessageRepository(InternalMessage);
 export const taskRepo = new TaskRepository(Task);
 export const notificationRepo = new NotificationRepository(Notification);
+
+class SubscriptionPlanRepository extends BaseRepository {}
+export const subscriptionPlanRepo = new SubscriptionPlanRepository(SubscriptionPlan);

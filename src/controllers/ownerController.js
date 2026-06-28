@@ -1,213 +1,196 @@
+import BaseController from './baseController.js';
+import ownerBillingService from '../services/owner/ownerBillingService.js';
+import ownerAnalyticsService from '../services/owner/ownerAnalyticsService.js';
 import { companyRepo, userRepo } from '../repositories/index.js';
 import { ROLES } from '../constants/index.js';
-import telegramService from '../services/telegramService.js';
-import ownerDashboardService from '../services/owner/ownerDashboardService.js';
 
-/**
- * @desc    Get dashboard summary for company owner
- * @route   GET /api/v1/owner/dashboard
- * @access  Private (COMPANY_OWNER)
- */
-const getDashboardSummary = async (req, res, next) => {
-  try {
-    const { companyId } = req.user;
-    const dashboard = await ownerDashboardService.getDashboard(companyId, req.query);
-    res.status(200).json({ success: true, data: { dashboard } });
-  } catch (error) {
-    next(error);
-  }
-};
+class OwnerController extends BaseController {
 
-/**
- * @desc    Get company settings
- * @route   GET /api/v1/owner/settings
- * @access  Private (COMPANY_OWNER)
- */
-const getCompanySettings = async (req, res, next) => {
-  try {
-    const company = await companyRepo.model.findById(req.user.companyId);
-    if (!company) {
-      return res.status(404).json({ success: false, message: 'Company not found' });
-    }
+  // ─── Subscription Plans ──────────────────────
 
-    res.status(200).json({
-      success: true,
-      data: company,
+  listPlans = this.catchAsync(async (req, res) => {
+    const plans = await ownerBillingService.listPlans(req.query);
+    this.sendSuccess(res, { plans }, 'Subscription plans retrieved');
+  });
+
+  getPlan = this.catchAsync(async (req, res) => {
+    const plan = await ownerBillingService.getPlan(req.params.planId);
+    this.sendSuccess(res, { plan });
+  });
+
+  createPlan = this.catchAsync(async (req, res) => {
+    const plan = await ownerBillingService.createPlan(req.body);
+    this.sendSuccess(res, { plan }, 'Subscription plan created', 201);
+  });
+
+  updatePlan = this.catchAsync(async (req, res) => {
+    const plan = await ownerBillingService.updatePlan(req.params.planId, req.body);
+    this.sendSuccess(res, { plan }, 'Subscription plan updated');
+  });
+
+  deletePlan = this.catchAsync(async (req, res) => {
+    await ownerBillingService.deletePlan(req.params.planId);
+    this.sendSuccess(res, null, 'Subscription plan deleted');
+  });
+
+  togglePlanActive = this.catchAsync(async (req, res) => {
+    const plan = await ownerBillingService.togglePlanActive(req.params.planId);
+    this.sendSuccess(res, { plan }, `Plan ${plan.isActive ? 'activated' : 'deactivated'}`);
+  });
+
+  // ─── Company Subscriptions ────────────────────
+
+  listCompanySubscriptions = this.catchAsync(async (req, res) => {
+    const result = await ownerBillingService.listCompanySubscriptions(req.query);
+    this.sendPaginated(res, result.data, {
+      page: result.page,
+      limit: result.limit,
+      total: result.total,
+      pages: result.pages,
     });
-  } catch (error) {
-    next(error);
-  }
-};
+  });
 
-/**
- * @desc    Update company settings
- * @route   PUT /api/v1/owner/settings
- * @access  Private (COMPANY_OWNER)
- */
-const updateCompanySettings = async (req, res, next) => {
-  try {
-    const company = await companyRepo.model.findById(req.user.companyId);
-    if (!company) {
-      return res.status(404).json({ success: false, message: 'Company not found' });
-    }
+  getCompanySubscription = this.catchAsync(async (req, res) => {
+    const company = await ownerBillingService.getCompanySubscription(req.params.companyId);
+    this.sendSuccess(res, { company });
+  });
 
-    // Merge updates
-    const updates = req.body;
-    
-    if (updates.name) company.name = updates.name;
-    if (updates.industry) company.industry = updates.industry;
-    
-    if (updates.channelsConfig) {
-      if (updates.channelsConfig.telegram) {
-        company.channelsConfig.telegram = {
-          ...company.channelsConfig.telegram,
-          ...updates.channelsConfig.telegram
-        };
-      }
-      if (updates.channelsConfig.whatsapp) {
-        company.channelsConfig.whatsapp = {
-          ...company.channelsConfig.whatsapp,
-          ...updates.channelsConfig.whatsapp
-        };
-      }
-      if (updates.channelsConfig.webChat) {
-        company.channelsConfig.webChat = {
-          ...company.channelsConfig.webChat,
-          ...updates.channelsConfig.webChat
-        };
-      }
-    }
+  assignPlanToCompany = this.catchAsync(async (req, res) => {
+    const { planId, startDate, endDate, trialEndDate, autoRenew } = req.body;
+    const company = await ownerBillingService.assignPlanToCompany(
+      req.params.companyId, planId, { startDate, endDate, trialEndDate, autoRenew }
+    );
+    this.sendSuccess(res, { company }, 'Plan assigned to company');
+  });
 
-    if (updates.settings) {
-      company.settings = {
-        ...company.settings,
-        ...updates.settings,
-      };
-    }
+  updateCompanySubscription = this.catchAsync(async (req, res) => {
+    const company = await ownerBillingService.updateCompanySubscription(req.params.companyId, req.body);
+    this.sendSuccess(res, { company }, 'Company subscription updated');
+  });
 
-    await company.save();
+  cancelCompanySubscription = this.catchAsync(async (req, res) => {
+    const company = await ownerBillingService.cancelCompanySubscription(req.params.companyId);
+    this.sendSuccess(res, { company }, 'Company subscription canceled');
+  });
 
-    res.status(200).json({
-      success: true,
-      data: company,
+  // ─── Billing / Invoices ───────────────────────
+
+  addInvoice = this.catchAsync(async (req, res) => {
+    const invoice = await ownerBillingService.addInvoice(req.params.companyId, req.body);
+    this.sendSuccess(res, { invoice }, 'Invoice added', 201);
+  });
+
+  listInvoices = this.catchAsync(async (req, res) => {
+    const result = await ownerBillingService.listInvoices(req.params.companyId, req.query);
+    this.sendPaginated(res, result.data, {
+      page: result.page,
+      limit: result.limit,
+      total: result.total,
+      pages: result.pages,
     });
-  } catch (error) {
-    next(error);
-  }
-};
+  });
 
-/**
- * @desc    Update + apply Telegram webhook URL
- * @route   POST /api/v1/owner/telegram/webhook
- * @access  Private (COMPANY_OWNER)
- */
-const updateTelegramWebhook = async (req, res, next) => {
-  try {
-    const { webhookUrl } = req.body || {};
+  updateInvoice = this.catchAsync(async (req, res) => {
+    const invoice = await ownerBillingService.updateInvoice(req.params.companyId, req.params.invoiceId, req.body);
+    this.sendSuccess(res, { invoice }, 'Invoice updated');
+  });
 
-    if (!webhookUrl || typeof webhookUrl !== 'string') {
-      return res.status(400).json({ success: false, message: 'webhookUrl is required' });
+  // ─── Billing Info ──────────────────────────────
+
+  updateBillingInfo = this.catchAsync(async (req, res) => {
+    const company = await ownerBillingService.updateBillingInfo(req.params.companyId, req.body);
+    this.sendSuccess(res, { company }, 'Billing info updated');
+  });
+
+  // ─── Dashboard ─────────────────────────────────
+
+  getOwnerDashboard = this.catchAsync(async (req, res) => {
+    const dashboard = await ownerBillingService.getOwnerDashboard();
+    this.sendSuccess(res, { dashboard });
+  });
+
+  // ─── All Companies (Owner platform view) ──────
+
+  listAllCompanies = this.catchAsync(async (req, res) => {
+    const { page = 1, limit = 20, isActive, search } = req.query;
+    const filter = {};
+    if (isActive !== undefined) filter.isActive = isActive === 'true';
+    if (search) {
+      filter.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { slug: { $regex: search, $options: 'i' } },
+      ];
     }
 
-    let parsed;
-    try {
-      parsed = new URL(webhookUrl);
-    } catch {
-      return res.status(400).json({ success: false, message: 'webhookUrl must be a valid URL' });
-    }
+    const total = await companyRepo.count(filter);
+    const companies = await companyRepo.model.find(filter)
+      .populate('subscription.planId', 'name code price currency interval')
+      .sort({ createdAt: -1 })
+      .skip((parseInt(page) - 1) * parseInt(limit))
+      .limit(parseInt(limit))
+      .select('-invoices')
+      .lean();
 
-    // Telegram requires a publicly reachable HTTPS webhook (no localhost/private IP).
-    if (parsed.protocol !== 'https:') {
-      return res.status(400).json({
-        success: false,
-        message: 'Telegram webhookUrl must start with https:// (use ngrok or a public domain)',
-      });
-    }
-    const host = (parsed.hostname || '').toLowerCase();
-    const isLocalHost =
-      host === 'localhost' ||
-      host === '127.0.0.1' ||
-      host === '::1' ||
-      host.endsWith('.local');
-    if (isLocalHost) {
-      return res.status(400).json({
-        success: false,
-        message: 'Telegram webhookUrl cannot be localhost. Use your ngrok HTTPS URL instead.',
-      });
-    }
-
-    const company = await companyRepo.model.findById(req.user.companyId);
-    if (!company) {
-      return res.status(404).json({ success: false, message: 'Company not found' });
-    }
-
-    const botToken = company.channelsConfig?.telegram?.botToken;
-    if (!botToken) {
-      return res.status(400).json({ success: false, message: 'Telegram bot token is not configured' });
-    }
-
-    company.channelsConfig.telegram = {
-      ...company.channelsConfig.telegram,
-      webhookUrl,
-    };
-    await company.save();
-
-    const secret = company.channelsConfig?.telegram?.webhookSecret || null;
-
-    let tgResult;
-    try {
-      tgResult = await telegramService.setWebhook(botToken, webhookUrl, secret);
-    } catch (err) {
-      const details = err.response?.data || err.message;
-      const description =
-        (typeof details === 'object' && details ? details.description : null) ||
-        (typeof details === 'string' ? details : null);
-      return res.status(502).json({
-        success: false,
-        message: description ? `Failed to set Telegram webhook: ${description}` : 'Failed to set Telegram webhook',
-        error: details,
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-      data: {
-        webhookUrl,
-        telegram: tgResult,
-      },
-      message: 'Telegram webhook updated',
+    this.sendPaginated(res, companies, {
+      page: parseInt(page),
+      limit: parseInt(limit),
+      total,
+      pages: Math.ceil(total / parseInt(limit)),
     });
-  } catch (error) {
-    next(error);
-  }
-};
+  });
 
-/**
- * @desc    List all company managers
- * @route   GET /api/v1/owner/managers
- * @access  Private (COMPANY_OWNER)
- */
-const listManagers = async (req, res, next) => {
-  try {
-    const managers = await userRepo.model.find({
-      companyId: req.user.companyId,
-      role: ROLES.COMPANY_MANAGER,
-    }).select('-passwordHash');
+  getCompanyDetail = this.catchAsync(async (req, res) => {
+    const data = await ownerBillingService.getCompanyDetailPage(req.params.companyId);
+    this.sendSuccess(res, { company: data });
+  });
 
-    res.status(200).json({
-      success: true,
-      count: managers.length,
-      data: managers,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
+  // ─── Analytics (Platform-wide) ─────────────────
 
-export default {
-  getDashboardSummary,
-  getCompanySettings,
-  updateCompanySettings,
-  updateTelegramWebhook,
-  listManagers,
-};
+  getAnalyticsOverview = this.catchAsync(async (req, res) => {
+    const { from, to } = req.query;
+    const overview = await ownerAnalyticsService.getPlatformOverview({ from, to });
+    this.sendSuccess(res, { overview });
+  });
+
+  // ─── Owner Profile / Settings ─────────────────
+
+  getOwnerSettings = this.catchAsync(async (req, res) => {
+    const owner = await userRepo.model.findById(req.userId)
+      .select('-passwordHash')
+      .lean();
+    if (!owner) return res.status(404).json({ success: false, message: 'Owner not found' });
+    this.sendSuccess(res, { settings: owner });
+  });
+
+  updateOwnerSettings = this.catchAsync(async (req, res) => {
+    const allowed = ['name', 'email', 'phone', 'profileImage'];
+    const updates = {};
+    allowed.forEach(f => { if (req.body[f] !== undefined) updates[f] = req.body[f]; });
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ success: false, message: 'No valid fields to update' });
+    }
+
+    const owner = await userRepo.model.findByIdAndUpdate(req.userId, updates, { new: true })
+      .select('-passwordHash');
+    if (!owner) throw ApiError.notFound('Owner not found');
+    this.sendSuccess(res, { settings: owner }, 'Settings updated');
+  });
+
+  // ─── Managers (backward compat) ─────────────────
+
+  listManagers = this.catchAsync(async (req, res) => {
+    const filter = { role: ROLES.COMPANY_MANAGER };
+    if (req.query.companyId) {
+      filter.companyId = req.query.companyId;
+    }
+    const managers = await userRepo.model.find(filter)
+      .populate('companyId', 'name slug')
+      .select('-passwordHash')
+      .sort({ companyId: 1, name: 1 });
+
+    res.status(200).json({ success: true, count: managers.length, data: managers });
+  });
+}
+
+export default new OwnerController();

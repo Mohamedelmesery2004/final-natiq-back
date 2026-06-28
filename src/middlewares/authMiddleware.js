@@ -37,7 +37,7 @@ const protect = asyncHandler(async (req, res, next) => {
 
 const tenantIsolation = asyncHandler(async (req, res, next) => {
 
-    if (req.userRole === ROLES.PLATFORM_SUPER_ADMIN) {
+    if (req.userRole === ROLES.PLATFORM_SUPER_ADMIN || req.userRole === ROLES.COMPANY_OWNER) {
     const explicitCompanyId = req.query?.companyId || req.body?.companyId;
     if (explicitCompanyId) {
       const company = await Company.findById(explicitCompanyId);
