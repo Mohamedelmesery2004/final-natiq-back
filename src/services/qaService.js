@@ -349,6 +349,25 @@ class QAService {
   async analyzeNatiqByTicketId(companyId, ticketId) {
     try {
       const result = await analyzeWithNatiqByTicketId(companyId, ticketId);
+
+      const fullTicket = await ticketService.getTicketById(companyId, ticketId);
+
+      await QAAnalysis.findOneAndUpdate(
+        { ticketId },
+        {
+          companyId,
+          ticketId,
+          agentId: fullTicket.assignedTo?._id || null,
+          customerId: fullTicket.userId?._id || null,
+          ticketNumber: fullTicket.ticketNumber,
+          channel: fullTicket.channel,
+          category: fullTicket.category,
+          natiqAnalysis: result.analysis,
+          'metadata.analyzedAt': new Date(result.analyzedAt),
+        },
+        { upsert: true, new: true }
+      );
+
       return {
         ...result,
         ticketId,
