@@ -12,6 +12,7 @@ import InternalMessage from './internalMessage.js';
 import Task from './task.js';
 import Notification from './notification.js';
 import SubscriptionPlan from './subscriptionPlan.js';
+import CoachJob from './coachJob.js';
 
 export {
   Company,
@@ -28,4 +29,5 @@ export {
   Task,
   Notification,
   SubscriptionPlan,
+  CoachJob,
 };

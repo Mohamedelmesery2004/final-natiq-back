@@ -25,6 +25,7 @@ import teamLeaderRoutes from './routes/teamLeaderRoutes.js';
 import managerRoutes from './routes/managerRoutes.js';
 import ownerRoutes from './routes/ownerRoutes.js';
 import internalMessageRoutes from './routes/internalMessageRoutes.js';
+import coachRoutes from './routes/coachRoutes.js';
 
 import { errorHandler, notFound } from './middlewares/errorMiddleware.js';
 
@@ -81,6 +82,7 @@ app.use('/api/v1/calls', callRoutes);
 app.use('/api/v1/team-leader', teamLeaderRoutes);
 app.use('/api/v1/owner', ownerRoutes);
 app.use('/api/v1/internal-messages', internalMessageRoutes);
+app.use('/api/v1/coach', coachRoutes);
 
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 

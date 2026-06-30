@@ -59,6 +59,10 @@ const config = {
   natiq: {
     analyzeUrl: process.env.NATIQ_ANALYZE_URL,
   },
+
+  coach: {
+    apiUrl: process.env.COACH_API_URL || 'https://BnSa3d-coaching-api.hf.space/coach',
+  },
 };
 
 export default config;
