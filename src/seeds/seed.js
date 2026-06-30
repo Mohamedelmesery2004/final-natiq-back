@@ -1064,6 +1064,7 @@ const seed = async () => {
     console.log(`📌 Analytics Overview:  GET /api/v1/admin/analytics/overview`);
     console.log('==========================================\n');
 
+    await mongoose.disconnect();
     process.exit(0);
   } catch (error) {
     console.error('Seed error:', error);

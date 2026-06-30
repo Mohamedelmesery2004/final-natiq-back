@@ -415,7 +415,8 @@ socket.emit('ticket:messageSent', { ticketId, content, createdAt: new Date() });
 
 const getIO = () => {
   if (!io) {
-    throw new Error('Socket.IO not initialized');
+    console.warn('[Socket.IO] Not initialized — returning null. Real-time features unavailable.');
+    return null;
   }
   return io;
 };

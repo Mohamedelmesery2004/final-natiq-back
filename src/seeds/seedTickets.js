@@ -194,6 +194,7 @@ const seed = async () => {
     console.log('  Login as teamlead@primestore.com / teamlead123');
     console.log('==========================================\n');
 
+    await mongoose.disconnect();
     process.exit(0);
   } catch (error) {
     console.error('Seed error:', error);

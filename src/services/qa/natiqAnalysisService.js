@@ -97,6 +97,10 @@ export const analyzeWithNatiq = async (ticket) => {
 export const analyzeWithNatiqByTicketId = async (companyId, ticketId) => {
   const payload = await buildConversationFromTicketId(companyId, ticketId);
 
+  if (!config.natiq.analyzeUrl) {
+    throw ApiError.internal('NATIQ_ANALYZE_URL is not configured.');
+  }
+
   const response = await axios.post(
     config.natiq.analyzeUrl,
     payload,
