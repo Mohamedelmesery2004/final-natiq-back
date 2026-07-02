@@ -72,4 +72,10 @@ const getResultById = {
   }),
 };
 
-export { analyzeRaw, analyzeById, analyzeNatiqById, getResults, getResultById };
+const getByTicketId = {
+  params: Joi.object({
+    ticketId: Joi.string().required(),
+  }),
+};
+
+export { analyzeRaw, analyzeById, analyzeNatiqById, getResults, getResultById, getByTicketId };

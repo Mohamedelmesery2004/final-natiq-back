@@ -44,6 +44,14 @@ class QAController extends BaseController {
 
     this.sendSuccess(res, result, 'Automated QA analysis details retrieved successfully');
   });
+
+  getByTicketId = this.catchAsync(async (req, res) => {
+    const { ticketId } = req.params;
+
+    const result = await qaService.getAnalysisByTicketId(req.companyId, ticketId);
+
+    this.sendSuccess(res, result, 'QA analysis retrieved successfully');
+  });
 }
 
 export default new QAController();

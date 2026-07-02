@@ -45,6 +45,13 @@ router.get(
 );
 
 router.get(
+  '/results/by-ticket/:ticketId',
+  qaAccess,
+  validate(qaValidator.getByTicketId),
+  qaController.getByTicketId
+);
+
+router.get(
   '/results/:id',
   qaAccess,
   validate(qaValidator.getResultById),

@@ -432,6 +432,16 @@ class QAService {
     return analysis;
   }
 
+  async getAnalysisByTicketId(companyId, ticketId) {
+    const analysis = await QAAnalysis.findOne({ companyId, ticketId })
+      .populate('agentId', 'name email')
+      .populate('customerId', 'name email')
+      .populate('ticketId', 'ticketNumber status channel context');
+
+    if (!analysis) throw ApiError.notFound('Analysis not found for this ticket');
+    return analysis;
+  }
+
   _buildTicketPayload(ticket, sessionMessages = []) {
     const conversation = sessionMessages
       .filter((m) => typeof m.content === 'string' && m.content.trim())
